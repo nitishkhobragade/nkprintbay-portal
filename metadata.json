@@ -1,0 +1,6 @@
+{
+  "name": "NP Print Portal - Document & ID Card Processing Engine",
+  "description": "Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

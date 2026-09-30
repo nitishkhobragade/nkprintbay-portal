@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NP Print Portal | Ultra-HD 300 DPI ID Card & Document Engine</title>
+    <meta name="description" content="Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly." />
+    <meta property="og:title" content="NP Print Portal | Ultra-HD 300 DPI ID Card & Document Engine" />
+    <meta property="og:description" content="Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+      @media print {
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .no-print {
+          display: none !important;
+        }
+        .print-only-container {
+          display: block !important;
+          position: absolute !important;
+          left: 0 !important;
+          top: 0 !important;
+          width: 100% !important;
+          height: auto !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        .print-page-canvas {
+          width: 100% !important;
+          max-width: 210mm !important;
+          height: auto !important;
+          display: block !important;
+          page-break-after: avoid !important;
+          page-break-inside: avoid !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-neutral-950 text-neutral-100 antialiased font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
