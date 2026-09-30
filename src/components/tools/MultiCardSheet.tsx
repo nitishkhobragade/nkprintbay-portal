@@ -32,6 +32,7 @@ import {
   downloadCanvasAsPng,
   triggerPrintA4
 } from '../../lib/canvasUtils';
+import { executeNativePrint } from '../../lib/nativePrint';
 
 export interface CardSlotItem {
   id: string;
@@ -373,10 +374,10 @@ export default function MultiCardSheet() {
     confetti({ particleCount: 40, spread: 70, origin: { y: 0.8 } });
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     const canvas = a4CanvasRef.current;
     if (!canvas) return;
-    triggerPrintA4(canvas);
+    await executeNativePrint(canvas, 'standard-a4-borderless');
   };
 
   return (

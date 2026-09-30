@@ -65,6 +65,12 @@ import {
 } from '../lib/canvasUtils';
 
 import {
+  executeNativePrint,
+  PRINTER_HARDWARE_PRESETS,
+  detectEnvironment
+} from '../lib/nativePrint';
+
+import {
   generateSampleAadhaarCanvas,
   generateSampleAngledMobilePhoto
 } from '../lib/sampleDocuments';
@@ -111,6 +117,7 @@ export default function CardProcessor() {
   // A4 Assembly Settings & Canvas
   const [a4Options, setA4Options] = useState<A4AssemblyOptions>(DEFAULT_A4_OPTIONS);
   const [assembledA4Canvas, setAssembledA4Canvas] = useState<HTMLCanvasElement | null>(null);
+  const [selectedPrinterPreset, setSelectedPrinterPreset] = useState<string>('standard-a4-borderless');
 
   // UI Viewport / Active Tabs
   const [activeViewTab, setActiveViewTab] = useState<'editor' | 'preview-a4' | 'cards'>('editor');
@@ -633,10 +640,11 @@ export default function CardProcessor() {
     setStatusMessage('Full A4 Sheet downloaded (2480 × 3508 px @ 300 DPI).');
   };
 
-  const handleTriggerPrint = () => {
+  const handleTriggerPrint = async () => {
     if (!assembledA4Canvas) return;
-    setStatusMessage('Opening 1:1 scale browser print dialog (A4, 0 margin)...');
-    triggerPrintA4(assembledA4Canvas);
+    setStatusMessage('Initiating 1:1 scale print stream...');
+    const res = await executeNativePrint(assembledA4Canvas, selectedPrinterPreset);
+    setStatusMessage(res.message);
   };
 
   // ----------------------------------------------------
@@ -1101,6 +1109,21 @@ export default function CardProcessor() {
                   onChange={(e) => updateA4Options({ showCuttingMarks: e.target.checked })}
                   className="rounded bg-neutral-800 border-neutral-700 text-cyan-500 focus:ring-0 cursor-pointer"
                 />
+              </div>
+
+              <div className="pt-2">
+                <span className="text-[11px] text-neutral-400 block mb-1">Target Printer Hardware Profile:</span>
+                <select
+                  value={selectedPrinterPreset}
+                  onChange={(e) => setSelectedPrinterPreset(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded px-2.5 py-1.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-500 font-medium"
+                >
+                  {PRINTER_HARDWARE_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
