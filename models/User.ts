@@ -10,7 +10,7 @@
 
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export type UserRole = 'admin' | 'user';
+export type UserRole = 'admin' | 'user' | 'master';
 export type PlanStatus = 'active' | 'expired' | 'suspended';
 
 export interface IUser extends Document {
@@ -56,7 +56,7 @@ const UserSchema: Schema<IUser> = new Schema(
     },
     role: {
       type: String,
-      enum: ['admin', 'user'],
+      enum: ['admin', 'user', 'master'],
       default: 'user',
       index: true,
     },

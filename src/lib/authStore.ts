@@ -10,11 +10,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AdminUserData } from '../../app/admin/page';
 
+export type UserRole = 'admin' | 'user' | 'master';
+
 export interface SessionUser {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'user';
+  role: UserRole;
   planStatus: 'active' | 'expired' | 'suspended';
   planExpiresAt: string;
   sessionToken: string;
@@ -24,8 +26,21 @@ export interface SessionUser {
 const STORAGE_USERS_KEY = 'np_admin_users_db';
 const STORAGE_SESSION_KEY = 'np_active_session_data';
 
-// Initial pre-seeded users
+// Initial pre-seeded users (Includes Super Admin, Operators, and Master Test User)
 export const SEED_USERS: AdminUserData[] = [
+  {
+    _id: 'usr_master',
+    name: 'Master Test Operator (Cyber Cafe Simulator)',
+    email: 'master@printbay.in',
+    role: 'master',
+    planStatus: 'active',
+    effectiveStatus: 'active',
+    planExpiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+    currentSessionToken: 'sess_master_token_007',
+    isSessionActive: true,
+    daysRemaining: 180,
+    createdAt: new Date().toISOString(),
+  },
   {
     _id: 'usr_admin',
     name: 'Super Admin',

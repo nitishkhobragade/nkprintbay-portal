@@ -40,7 +40,7 @@ export interface AdminUserData {
   _id: string;
   name: string;
   email: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'master';
   planStatus: 'active' | 'expired' | 'suspended';
   effectiveStatus?: 'active' | 'expired' | 'suspended';
   planExpiresAt: string | Date;

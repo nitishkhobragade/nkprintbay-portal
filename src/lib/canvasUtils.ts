@@ -118,15 +118,27 @@ export interface RenderPdfResult {
   scale: number;
 }
 
+export interface RenderPdfOptions {
+  pageNumber?: number;
+  targetDpi?: number;
+  password?: string;
+}
+
 /**
  * Renders a PDF page to an HTML5 canvas at True 300 DPI.
  * Standard PDF points are 72 DPI; scale factor 300 / 72 = ~4.166667 ensure crystal clarity.
+ * Supports password-protected PDFs (e.g. e-Aadhaar, e-PAN).
  */
 export async function renderPdfToCanvas(
   pdfData: ArrayBuffer | Uint8Array,
-  pageNumber = 1,
-  targetDpi = DPI_300
+  optionsOrPage: RenderPdfOptions | number = 1,
+  targetDpi = DPI_300,
+  passwordParam?: string
 ): Promise<RenderPdfResult> {
+  const pageNumber = typeof optionsOrPage === 'number' ? optionsOrPage : optionsOrPage.pageNumber || 1;
+  const dpi = typeof optionsOrPage === 'number' ? targetDpi : optionsOrPage.targetDpi || DPI_300;
+  const password = typeof optionsOrPage === 'object' ? optionsOrPage.password : passwordParam;
+
   // Ensure PDF.js worker
   if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -134,6 +146,7 @@ export async function renderPdfToCanvas(
 
   const loadingTask = pdfjsLib.getDocument({
     data: pdfData,
+    password: password || undefined,
     cMapUrl: `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/cmaps/`,
     cMapPacked: true,
   });
@@ -145,7 +158,7 @@ export async function renderPdfToCanvas(
 
   // Default viewport is 72 DPI
   const unscaledViewport = page.getViewport({ scale: 1.0 });
-  const scale = targetDpi / 72; // ~4.1667x
+  const scale = dpi / 72; // ~4.1667x
   const viewport = page.getViewport({ scale });
 
   const canvas = document.createElement('canvas');
@@ -727,12 +740,15 @@ function applyUnsharpMask(ctx: CanvasRenderingContext2D, width: number, height: 
 
 export type A4LayoutMode = 'side-by-side' | 'stacked' | 'multi-badge';
 export type CardBorderStyle = 'solid-hairline' | 'dashed-cut' | 'none';
+export type PrintTargetPreset = 'a4-paper' | 'epson-pvc-tray';
 
 export interface A4AssemblyOptions {
   layout: A4LayoutMode;
   borderStyle: CardBorderStyle;
   showCuttingMarks: boolean;
   showLabels: boolean;
+  cutGuideBorder?: boolean;     // 0.5pt subtle outline for precise scissor/guillotine cutting
+  printTargetPreset?: PrintTargetPreset; // A4 glossy sheet vs Epson L8050/L805 PVC Card Tray
   gapMm: number;             // Gap between cards in mm (e.g. 4mm standard lamination fold)
   marginTopMm: number;       // Top margin in mm (e.g. 20mm)
   cardWidthPx?: number;      // defaults to 1012 px
@@ -744,6 +760,8 @@ export const DEFAULT_A4_OPTIONS: A4AssemblyOptions = {
   borderStyle: 'solid-hairline',
   showCuttingMarks: true,
   showLabels: true,
+  cutGuideBorder: true,
+  printTargetPreset: 'a4-paper',
   gapMm: 6,
   marginTopMm: 24,
   cardWidthPx: CR80_WIDTH_PX,
@@ -777,25 +795,59 @@ export function assembleA4Canvas(
   let frontPos = { x: 0, y: 0 };
   let backPos = { x: 0, y: 0 };
 
-  if (options.layout === 'side-by-side') {
-    // Side-by-side layout: Front on left, Back on right, centered horizontally on A4 sheet
-    const totalW = cardW * 2 + gapPx;
-    const startX = Math.round((A4_WIDTH_PX - totalW) / 2);
-    const startY = marginTopPx;
+  // ----------------------------------------------------
+  // PRESET A: EPSON L8050 / L805 DUAL PVC CARD TRAY
+  // ----------------------------------------------------
+  if (options.printTargetPreset === 'epson-pvc-tray') {
+    // Epson PVC Tray standard coordinate slots:
+    // Tray is fed portrait. Slot 1 (Front Card) and Slot 2 (Back Card)
+    const slotX = Math.round((A4_WIDTH_PX - cardW) / 2);
+    const slot1Y = Math.round((35 / MM_PER_INCH) * DPI_300); // 35mm from top
+    const slot2Y = Math.round((140 / MM_PER_INCH) * DPI_300); // 140mm from top
 
-    frontPos = { x: startX, y: startY };
-    backPos = { x: startX + cardW + gapPx, y: startY };
-  } else if (options.layout === 'stacked') {
-    // Stacked layout: Front on top, Back directly underneath
-    const startX = Math.round((A4_WIDTH_PX - cardW) / 2);
-    frontPos = { x: startX, y: marginTopPx };
-    backPos = { x: startX, y: marginTopPx + cardH + gapPx };
+    frontPos = { x: slotX, y: slot1Y };
+    backPos = { x: slotX, y: slot2Y };
+
+    // Draw Epson Tray Guide Graphic
+    ctx.save();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([12, 10]);
+    // Tray border
+    const trayW = cardW + 120;
+    const trayH = slot2Y + cardH + 100 - (slot1Y - 60);
+    ctx.strokeRect(slotX - 60, slot1Y - 60, trayW, trayH);
+
+    // Feed Direction Arrow
+    ctx.fillStyle = '#64748b';
+    ctx.font = '600 24px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('▲ FEED INTO PRINTER (EPSON L8050 / L805 PVC CARD TRAY) ▲', A4_WIDTH_PX / 2, slot1Y - 80);
+    ctx.restore();
   } else {
-    // Multi-badge: 5 cards on A4 sheet simulation (or 2-row duplicate)
-    const totalW = cardW * 2 + gapPx;
-    const startX = Math.round((A4_WIDTH_PX - totalW) / 2);
-    frontPos = { x: startX, y: marginTopPx };
-    backPos = { x: startX + cardW + gapPx, y: marginTopPx };
+    // ----------------------------------------------------
+    // PRESET B: A4 GLOSSY / NORMAL PAPER
+    // ----------------------------------------------------
+    if (options.layout === 'side-by-side') {
+      // Side-by-side layout: Front on left, Back on right, centered horizontally on A4 sheet
+      const totalW = cardW * 2 + gapPx;
+      const startX = Math.round((A4_WIDTH_PX - totalW) / 2);
+      const startY = marginTopPx;
+
+      frontPos = { x: startX, y: startY };
+      backPos = { x: startX + cardW + gapPx, y: startY };
+    } else if (options.layout === 'stacked') {
+      // Stacked layout: Front on top, Back directly underneath
+      const startX = Math.round((A4_WIDTH_PX - cardW) / 2);
+      frontPos = { x: startX, y: marginTopPx };
+      backPos = { x: startX, y: marginTopPx + cardH + gapPx };
+    } else {
+      // Multi-badge
+      const totalW = cardW * 2 + gapPx;
+      const startX = Math.round((A4_WIDTH_PX - totalW) / 2);
+      frontPos = { x: startX, y: marginTopPx };
+      backPos = { x: startX + cardW + gapPx, y: marginTopPx };
+    }
   }
 
   // 2. Draw Front Card
@@ -814,8 +866,14 @@ export function assembleA4Canvas(
     drawPlaceholderCard(ctx, backPos.x, backPos.y, cardW, cardH, 'BACK CARD SLOT');
   }
 
-  // 4. Draw Center Fold Line if side-by-side
-  if (options.layout === 'side-by-side' && frontCanvas && backCanvas && options.showCuttingMarks) {
+  // 4. Draw Center Fold Line if side-by-side on A4 paper
+  if (
+    options.printTargetPreset !== 'epson-pvc-tray' &&
+    options.layout === 'side-by-side' &&
+    frontCanvas &&
+    backCanvas &&
+    options.showCuttingMarks
+  ) {
     const foldX = frontPos.x + cardW + Math.round(gapPx / 2);
     ctx.save();
     ctx.strokeStyle = '#cbd5e1';
@@ -834,7 +892,7 @@ export function assembleA4Canvas(
     ctx.restore();
   }
 
-  // 5. Draw Sheet Header & Print Scale Verification Rule (20mm scale bar)
+  // 5. Draw Sheet Header & Print Scale Verification Rule (50mm ruler)
   drawPrintCalibrationBar(ctx);
 
   return a4Canvas;
@@ -854,8 +912,13 @@ function drawCardAdornments(
 ) {
   ctx.save();
 
-  // Card Outer Border
-  if (options.borderStyle === 'solid-hairline') {
+  // 0.5pt subtle outline for precise scissor/guillotine cutting
+  if (options.cutGuideBorder) {
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1; // ~0.5pt at 300 DPI
+    ctx.setLineDash([]);
+    ctx.strokeRect(x, y, w, h);
+  } else if (options.borderStyle === 'solid-hairline') {
     ctx.strokeStyle = '#0f172a';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([]);
@@ -913,7 +976,7 @@ function drawCardAdornments(
     ctx.fillStyle = '#64748b';
     ctx.font = '600 24px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`${label} (85.6 × 54.0 mm)`, x + w / 2, y + h + 38);
+    ctx.fillText(`${label} (85.60 × 53.98 mm · CR80 Standard)`, x + w / 2, y + h + 38);
   }
 
   ctx.restore();
@@ -959,25 +1022,47 @@ function drawPrintCalibrationBar(ctx: CanvasRenderingContext2D) {
 
   ctx.save();
   ctx.fillStyle = '#475569';
-  ctx.font = '500 20px system-ui, sans-serif';
+  ctx.font = '600 22px system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText('NP PRINT PORTAL · 300 DPI ULTRA-HD OUTPUT · 1:1 TRUE SCALE CHECK:', barX, barY - 14);
+  ctx.fillText('PHYSICAL CALIBRATION SCALE (VERIFY EXACT 50.0 mm WITH A PHYSICAL RULER):', barX, barY - 24);
 
-  // 50mm ruler line
+  // Main Baseline
   ctx.strokeStyle = '#0f172a';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.moveTo(barX, barY);
   ctx.lineTo(barX + px50mm, barY);
-  // ticks
-  ctx.moveTo(barX, barY - 12);
-  ctx.lineTo(barX, barY + 12);
-  ctx.moveTo(barX + px50mm, barY - 12);
-  ctx.lineTo(barX + px50mm, barY + 12);
   ctx.stroke();
 
-  ctx.font = '600 18px system-ui, sans-serif';
-  ctx.fillText('50.0 mm (Measure with physical ruler)', barX + px50mm + 20, barY + 6);
+  // Draw 50 millimeter ticks
+  ctx.lineWidth = 1.5;
+  for (let mm = 0; mm <= 50; mm++) {
+    const tickX = barX + Math.round((mm / MM_PER_INCH) * DPI_300);
+    let tickHeight = 10;
+
+    if (mm % 10 === 0) {
+      tickHeight = 24; // Major 1cm tick
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '700 18px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${mm}`, tickX, barY + 34);
+    } else if (mm % 5 === 0) {
+      tickHeight = 16; // Mid 5mm tick
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(tickX, barY - tickHeight);
+    ctx.lineTo(tickX, barY);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = '#0284c7';
+  ctx.font = '700 20px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('50.0 mm', barX + px50mm + 25, barY + 6);
+  ctx.fillStyle = '#64748b';
+  ctx.font = '500 16px system-ui, sans-serif';
+  ctx.fillText('(CR80 Standard: 85.60 × 53.98 mm)', barX + px50mm + 25, barY + 28);
   ctx.restore();
 }
 

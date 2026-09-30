@@ -428,3 +428,39 @@ function warpTriangleDirect(
   ctx.drawImage(img, 0, 0);
   ctx.restore();
 }
+
+/**
+ * Creates an underexposed, dark scanner capture with heavy gray paper haze and shadows
+ * to test 1-click Auto-Enhance, Brightness, and Contrast recovery.
+ */
+export function generateSampleDarkScanCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = A4_WIDTH_PX;
+  canvas.height = A4_HEIGHT_PX;
+  const ctx = canvas.getContext('2d')!;
+
+  // 1. Dark gray scanner glass haze
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(0, 0, A4_WIDTH_PX, A4_HEIGHT_PX);
+
+  // 2. Draw normal Aadhaar first onto temporary canvas
+  const normalAadhaar = generateSampleAadhaarCanvas();
+
+  // 3. Draw underexposed with dark overlay
+  ctx.drawImage(normalAadhaar, 0, 0);
+
+  // Apply heavy darkening shadow overlay
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.48)';
+  ctx.fillRect(0, 0, A4_WIDTH_PX, A4_HEIGHT_PX);
+
+  // Diagonal scanner shadow gradient
+  const grad = ctx.createLinearGradient(0, 0, A4_WIDTH_PX, A4_HEIGHT_PX);
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0.35)');
+  grad.addColorStop(0.7, 'rgba(0, 0, 0, 0.15)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0.50)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, A4_WIDTH_PX, A4_HEIGHT_PX);
+
+  return canvas;
+}
+

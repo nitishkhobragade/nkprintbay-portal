@@ -23,7 +23,8 @@ import {
   CheckCircle2,
   Calendar,
   Layers,
-  Sparkles
+  Sparkles,
+  UserCog
 } from 'lucide-react';
 import {
   SessionUser,
@@ -33,6 +34,7 @@ import {
   saveStoredUsers,
   SEED_USERS
 } from '../lib/authStore';
+import MasterTestingHUD from './MasterTestingHUD';
 
 interface AuthAndAccessGuardProps {
   children: React.ReactNode;
@@ -52,6 +54,7 @@ export default function AuthAndAccessGuard({
   const [isAccountSuspended, setIsAccountSuspended] = useState<boolean>(false);
   const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [showSwitchUserModal, setShowSwitchUserModal] = useState<boolean>(false);
+  const [showMasterHUD, setShowMasterHUD] = useState<boolean>(true);
 
   // Sync state and validate session
   const validateSession = () => {
@@ -296,17 +299,19 @@ export default function AuthAndAccessGuard({
 
         {/* Auth Action Controls */}
         <div className="flex items-center gap-2">
-          {/* Simulate 2nd Device Login Button */}
-          {currentUser && (
-            <button
-              onClick={handleSimulateSecondDeviceLogin}
-              className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-750 text-neutral-300 border border-neutral-700 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
-              title="Test Single-Device Enforcement by simulating a login from another phone/device"
-            >
-              <Smartphone className="w-3 h-3 text-amber-400" />
-              <span>Simulate 2nd Device Login</span>
-            </button>
-          )}
+          {/* Master Testing Mode Toggle Button */}
+          <button
+            onClick={() => setShowMasterHUD(!showMasterHUD)}
+            className={`px-2.5 py-1 rounded border text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              showMasterHUD
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-neutral-950 border-cyan-400 shadow-md shadow-cyan-500/20'
+                : 'bg-neutral-800 text-cyan-300 border-neutral-700 hover:bg-neutral-750'
+            }`}
+            title="Toggle Master User Testing HUD & Customer Experience Simulator"
+          >
+            <UserCog className="w-3.5 h-3.5" />
+            <span>Master Testing Mode</span>
+          </button>
 
           {/* Pricing / Upgrade Plans Button */}
           {onOpenPricing && (
@@ -561,13 +566,15 @@ export default function AuthAndAccessGuard({
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-xs text-white">{u.name}</span>
                         <span
-                          className={`text-[9px] px-1.5 py-0.2 rounded font-mono ${
+                          className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
                             u.role === 'admin'
-                              ? 'bg-amber-500/20 text-amber-300'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : u.role === 'master'
+                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                               : 'bg-neutral-800 text-neutral-400'
                           }`}
                         >
-                          {u.role.toUpperCase()}
+                          {u.role === 'master' ? 'MASTER SIMULATOR' : u.role.toUpperCase()}
                         </span>
                       </div>
                       <div className="text-[11px] text-neutral-400 font-mono mt-0.5">{u.email}</div>
@@ -605,6 +612,21 @@ export default function AuthAndAccessGuard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MASTER USER TESTING HUD (SIMULATE USERS EXPERIENCE)   */}
+      {/* ---------------------------------------------------- */}
+      {showMasterHUD && (
+        <MasterTestingHUD
+          currentUser={currentUser}
+          onUserSwitched={(user) => {
+            validateSession();
+            onSessionStateChange?.(user);
+          }}
+          onOpenAdmin={onOpenAdminPortal}
+          onOpenPricing={onOpenPricing}
+        />
       )}
     </div>
   );
