@@ -1,6 +1,6 @@
 {
-  "name": "NP Print Portal - Document & ID Card Processing Engine",
-  "description": "Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly.",
+  "name": "NK PrintBay - Cyber Cafe & Online Center Smart Utility Engine",
+  "description": "The Complete Operating System for Cyber Cafes, CSC Centers & Photo Studios. 1-Click e-Aadhaar/PAN/Voter card printing at true 300 DPI, AI photo upscaling, instant GST billing, exam photo-signature resizer, and 50+ counter utilities.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

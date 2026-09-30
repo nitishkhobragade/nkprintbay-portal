@@ -3,24 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NP Print Portal | Ultra-HD 300 DPI ID Card & Document Engine</title>
-    <meta name="description" content="Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly." />
-    <meta property="og:title" content="NP Print Portal | Ultra-HD 300 DPI ID Card & Document Engine" />
-    <meta property="og:description" content="Ultra-HD 300 DPI Document & ID Card Processing Engine for Aadhaar, PAN, and raw scans with auto-detection, deskewing, and A4 print assembly." />
+    <title>NK PrintBay - Cyber Cafe & Online Center Smart Utility Engine</title>
+    <link rel="icon" type="image/png" href="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png" />
+    <link rel="apple-touch-icon" href="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="description" content="NK PrintBay - The Complete Operating System for Cyber Cafes, CSC Centers & Photo Studios. 1-Click e-Aadhaar/PAN/Voter card printing at true 300 DPI, AI photo upscaling, instant GST billing, exam photo-signature resizer, and 50+ counter utilities." />
+    <meta property="og:title" content="NK PrintBay - Cyber Cafe & Online Center Smart Utility Engine" />
+    <meta property="og:description" content="1-Click e-Aadhaar/PAN/Voter card printing at true 300 DPI, AI photo upscaling, instant GST billing, exam photo-signature resizer, and 50+ counter utilities." />
+    <meta property="og:image" content="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="NK PrintBay - Cyber Cafe & Online Center Smart Utility Engine" />
+    <meta name="twitter:description" content="The Complete Operating System for Cyber Cafes, CSC Centers & Photo Studios." />
+    <meta name="twitter:image" content="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
       @page {
         size: A4 portrait;
-        margin: 0;
+        margin: 0 !important;
       }
       @media print {
         html, body {
           margin: 0 !important;
           padding: 0 !important;
+          width: 210mm !important;
+          height: 297mm !important;
           background: #ffffff !important;
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
@@ -33,13 +42,13 @@
           position: absolute !important;
           left: 0 !important;
           top: 0 !important;
-          width: 100% !important;
+          width: 210mm !important;
           height: auto !important;
           margin: 0 !important;
           padding: 0 !important;
         }
         .print-page-canvas {
-          width: 100% !important;
+          width: 210mm !important;
           max-width: 210mm !important;
           height: auto !important;
           display: block !important;
@@ -49,7 +58,7 @@
       }
     </style>
   </head>
-  <body class="bg-neutral-950 text-neutral-100 antialiased font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+  <body class="bg-neutral-950 text-neutral-100 antialiased font-sans selection:bg-cyan-500/30 selection:text-cyan-200 overflow-x-hidden w-full max-w-full">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

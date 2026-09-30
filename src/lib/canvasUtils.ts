@@ -72,16 +72,16 @@ export const DOCUMENT_PRESETS: PresetCardLayout[] = [
   {
     id: 'aadhaar-letter',
     name: 'Aadhaar Letter (Standard e-Aadhaar)',
-    description: 'Bottom strip extraction: Left is Front (Photo & UID), Right is Back (Address & QR).',
-    front: { x: 0.048, y: 0.672, width: 0.438, height: 0.282 },
-    back: { x: 0.514, y: 0.672, width: 0.438, height: 0.282 },
+    description: 'Calibrated bottom strip: Front Left (Photo & UID), Back Right (Address & QR).',
+    front: { x: 0.045, y: 0.682, width: 0.435, height: 0.298 },
+    back: { x: 0.518, y: 0.682, width: 0.435, height: 0.298 },
   },
   {
     id: 'pan-ecard',
     name: 'e-PAN Card (NSDL / UTIITSL)',
     description: 'Bottom half split: Left Front (Photo & PAN), Right Back (QR Code & Hologram).',
-    front: { x: 0.062, y: 0.678, width: 0.428, height: 0.272 },
-    back: { x: 0.510, y: 0.678, width: 0.428, height: 0.272 },
+    front: { x: 0.055, y: 0.675, width: 0.435, height: 0.285 },
+    back: { x: 0.512, y: 0.675, width: 0.435, height: 0.285 },
   },
   {
     id: 'voter-epic',
@@ -208,6 +208,32 @@ export function loadImage(source: File | Blob | string): Promise<HTMLImageElemen
       img.src = URL.createObjectURL(source);
     }
   });
+}
+
+/**
+ * Rotates an HTML5 canvas by 90°, -90° (270°), or 180° with high fidelity.
+ * Reallocates width/height automatically.
+ */
+export function rotateCanvas(
+  inputCanvas: HTMLCanvasElement,
+  angleDegrees: 90 | -90 | 180 | 270
+): HTMLCanvasElement {
+  const output = document.createElement('canvas');
+  const isPerpendicular = Math.abs(angleDegrees) === 90 || Math.abs(angleDegrees) === 270;
+  output.width = isPerpendicular ? inputCanvas.height : inputCanvas.width;
+  output.height = isPerpendicular ? inputCanvas.width : inputCanvas.height;
+
+  const ctx = output.getContext('2d');
+  if (!ctx) return inputCanvas;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, output.width, output.height);
+
+  ctx.translate(output.width / 2, output.height / 2);
+  ctx.rotate((angleDegrees * Math.PI) / 180);
+  ctx.drawImage(inputCanvas, -inputCanvas.width / 2, -inputCanvas.height / 2);
+
+  return output;
 }
 
 // ==========================================

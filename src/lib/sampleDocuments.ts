@@ -83,18 +83,18 @@ export function generateSampleAadhaarCanvas(): HTMLCanvasElement {
   ctx.restore();
 
   // --- BOTTOM STRIP: FRONT & BACK CARDS ---
-  // Coordinates match DOCUMENT_PRESETS[0]
-  // Front: x: 0.048 (119px), y: 0.672 (2357px), w: 0.438 (1086px), h: 0.282 (989px) -> inside card is ~1012x638
-  const frontX = Math.round(0.048 * A4_WIDTH_PX);
-  const frontY = Math.round(0.672 * A4_HEIGHT_PX);
-  const backX = Math.round(0.514 * A4_WIDTH_PX);
-  const backY = Math.round(0.672 * A4_HEIGHT_PX);
+  // Coordinates match DOCUMENT_PRESETS[0] calibrated
+  // Front: x: 0.045 (111px), y: 0.682 (2392px), w: 0.435 (1078px), h: 0.298 (1045px)
+  const frontX = Math.round(0.045 * A4_WIDTH_PX);
+  const frontY = Math.round(0.682 * A4_HEIGHT_PX);
+  const backX = Math.round(0.518 * A4_WIDTH_PX);
+  const backY = Math.round(0.682 * A4_HEIGHT_PX);
 
   // Render Front Aadhaar Card
-  drawSampleAadhaarFront(ctx, frontX + 36, frontY + 30, CR80_WIDTH_PX, CR80_HEIGHT_PX);
+  drawSampleAadhaarFront(ctx, frontX + 32, frontY + 40, CR80_WIDTH_PX, CR80_HEIGHT_PX);
 
   // Render Back Aadhaar Card
-  drawSampleAadhaarBack(ctx, backX + 36, backY + 30, CR80_WIDTH_PX, CR80_HEIGHT_PX);
+  drawSampleAadhaarBack(ctx, backX + 32, frontY + 40, CR80_WIDTH_PX, CR80_HEIGHT_PX);
 
   return canvas;
 }

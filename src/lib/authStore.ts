@@ -16,8 +16,12 @@ export interface SessionUser {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   planStatus: 'active' | 'expired' | 'suspended';
+  planName?: string;
+  freePrintsLeft?: number;
+  creditsRemaining?: number;
   planExpiresAt: string;
   sessionToken: string;
   daysRemaining: number;
@@ -32,9 +36,11 @@ export const SEED_USERS: AdminUserData[] = [
     _id: 'usr_master',
     name: 'Master Test Operator (Cyber Cafe Simulator)',
     email: 'master@printbay.in',
+    phone: '+91 98200 12345',
     role: 'master',
     planStatus: 'active',
     effectiveStatus: 'active',
+    planName: 'Master Enterprise Simulator',
     planExpiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
     currentSessionToken: 'sess_master_token_007',
     isSessionActive: true,
@@ -45,9 +51,11 @@ export const SEED_USERS: AdminUserData[] = [
     _id: 'usr_admin',
     name: 'Super Admin',
     email: 'admin@npportal.com',
+    phone: '+91 99000 00001',
     role: 'admin',
     planStatus: 'active',
     effectiveStatus: 'active',
+    planName: 'Super Admin Lifetime License',
     planExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
     currentSessionToken: 'sess_admin_master_token',
     isSessionActive: true,
@@ -58,22 +66,26 @@ export const SEED_USERS: AdminUserData[] = [
     _id: 'usr_operator',
     name: 'Sharma Cyber Prints (Operator)',
     email: 'operator@printshop.in',
+    phone: '+91 98765 43210',
     role: 'user',
     planStatus: 'active',
     effectiveStatus: 'active',
-    planExpiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    planName: 'Starter Free Trial (Valid 7 Days)',
+    planExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     currentSessionToken: 'sess_operator_device_101',
     isSessionActive: true,
-    daysRemaining: 14,
+    daysRemaining: 7,
     createdAt: new Date().toISOString(),
   },
   {
     _id: 'usr_expired',
     name: 'Expired Counter (Demo)',
     email: 'expired.demo@counter.com',
+    phone: '+91 91234 56789',
     role: 'user',
     planStatus: 'expired',
     effectiveStatus: 'expired',
+    planName: 'Expired Plan',
     planExpiresAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     currentSessionToken: null,
     isSessionActive: false,

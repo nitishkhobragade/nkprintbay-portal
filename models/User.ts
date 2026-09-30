@@ -16,6 +16,7 @@ export type PlanStatus = 'active' | 'expired' | 'suspended';
 export interface IUser extends Document {
   name: string;
   email: string;
+  phone?: string;
   password: string; // bcrypt/argon2 hashed password
   role: UserRole;
   planStatus: PlanStatus;
@@ -47,6 +48,12 @@ const UserSchema: Schema<IUser> = new Schema(
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
         'Please provide a valid email address',
       ],
+    },
+    phone: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
     },
     password: {
       type: String,

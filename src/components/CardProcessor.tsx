@@ -3,13 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * CardProcessor.tsx
- * Complete core Document & ID Card Processing Engine for Print Portal & Cyber Cafes.
+ * Complete core Document & ID Card Processing Engine for Print Bay & Cyber Cafes.
  * Features:
- * - Password-protected PDF decryption (e-Aadhaar / e-PAN) directly in browser
- * - Interactive Test Suite (4 one-click official samples & lock tests)
- * - Real-time Quality & Enhancement Controls (Brightness, Contrast, Auto-Enhance, Cut-Guide Border)
- * - Strict 1:1 Scale Calibration (A4 Glossy Sheet vs Epson L8050/L805 PVC Card Tray)
- * - 50mm Physical Calibration Ruler for verification
+ * - Canvas Rotation Controls: Rotate Left (-90°), Rotate Right (+90°), Flip 180°
+ * - Free-Form 4-Corner Homography Perspective Warp (4 Draggable Corner Pins for tilted phone photos)
+ * - "Straighten & Crop" Homography Deskew Engine to True 300 DPI CR80 (1012 × 638 px)
+ * - Calibrated UIDAI e-Aadhaar & PAN PDF Coordinates with Fine-Tuning Nudge Controls (↑, ↓, ←, → by 2px)
+ * - Toggle Front / Back Card Slot on a single uploaded photo
+ * - Strict Date Format: DD/MM/YYYY across all generated cards and sheets
+ * - In-Browser Password-Protected PDF Decryption
+ * - Real-Time Quality & Enhancement Controls (Brightness, Contrast, Auto-Enhance, Cut-Guide Border)
+ * - Strict 1:1 Scale Print Output with 50mm Physical Calibration Scale
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -19,6 +23,7 @@ import {
   Printer,
   Download,
   RotateCcw,
+  RotateCw,
   Sliders,
   Sparkles,
   Maximize2,
@@ -41,7 +46,15 @@ import {
   Ruler,
   HelpCircle,
   Check,
-  X
+  X,
+  FlipVertical,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  Plus,
+  Minus,
+  Maximize
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -73,7 +86,8 @@ import {
   downloadCanvasAsPng,
   triggerPrintA4,
   loadImage,
-  getDefaultQuad
+  getDefaultQuad,
+  rotateCanvas
 } from '../lib/canvasUtils';
 
 import {
@@ -86,6 +100,8 @@ import {
   generateSampleAngledMobilePhoto,
   generateSampleDarkScanCanvas
 } from '../lib/sampleDocuments';
+
+import { formatDDMMYYYY, formatDDMMYYYYWithTime } from '../lib/dateUtils';
 
 type InputMode = 'pdf-preset' | 'raw-image';
 
@@ -112,10 +128,11 @@ export default function CardProcessor() {
   const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
   const [isSamplePasswordTest, setIsSamplePasswordTest] = useState<boolean>(false);
 
-  // Active Presets & Detection Regions (0.0 to 1.0 normalized)
+  // Active Presets & Detection Regions (Calibrated UIDAI e-Aadhaar)
   const [selectedPresetId, setSelectedPresetId] = useState<string>('aadhaar-letter');
   const [frontRect, setFrontRect] = useState<NormalizedRect>(DOCUMENT_PRESETS[0].front);
   const [backRect, setBackRect] = useState<NormalizedRect>(DOCUMENT_PRESETS[0].back);
+  const [activeNudgeTarget, setActiveNudgeTarget] = useState<'front' | 'back'>('front');
 
   // Raw Mobile Scan Homography State (4 Corners in pixels)
   const [cropQuad, setCropQuad] = useState<Quadrilateral>([
@@ -160,7 +177,7 @@ export default function CardProcessor() {
 
   const loadSampleAadhaar = () => {
     setIsProcessing(true);
-    setStatusMessage('Rendering 300 DPI sample Aadhaar document...');
+    setStatusMessage('Rendering 300 DPI calibrated Aadhaar document...');
     setTimeout(() => {
       try {
         const sampleCanvas = generateSampleAadhaarCanvas();
@@ -181,7 +198,7 @@ export default function CardProcessor() {
           filterOptions,
           a4Options
         );
-        setStatusMessage('Rendered Aadhaar document at 300 DPI (2480 × 3508 px). Front & back card extracted.');
+        setStatusMessage('Rendered UIDAI Aadhaar document at 300 DPI (2480 × 3508 px). Front & back card extracted.');
       } catch (err: any) {
         setStatusMessage(`Error loading sample: ${err.message}`);
       } finally {
@@ -192,7 +209,7 @@ export default function CardProcessor() {
 
   const loadSampleRawMobileScan = () => {
     setIsProcessing(true);
-    setStatusMessage('Generating skewed mobile camera photo with desk background...');
+    setStatusMessage('Generating skewed mobile camera photo on desk...');
     setTimeout(() => {
       try {
         const { canvas: mobileCanvas, trueQuad } = generateSampleAngledMobilePhoto();
@@ -210,7 +227,7 @@ export default function CardProcessor() {
         const a4 = assembleA4Canvas(enhanced, backCardCanvas, a4Options);
         setAssembledA4Canvas(a4);
 
-        setStatusMessage('Detected card contour via Sobel edge analysis. Perspective deskewed to 1012 × 638 px.');
+        setStatusMessage('Loaded mobile photo. Drag corner pins (1-4) or click "Straighten & Crop" to warp.');
       } catch (err: any) {
         setStatusMessage(`Error loading raw scan: ${err.message}`);
       } finally {
@@ -232,7 +249,6 @@ export default function CardProcessor() {
         setFrontRect(DOCUMENT_PRESETS[0].front);
         setBackRect(DOCUMENT_PRESETS[0].back);
 
-        // Apply heavier contrast and auto-levels
         const enhancedFilters: FilterOptions = {
           ...filterOptions,
           brightness: 12,
@@ -266,6 +282,113 @@ export default function CardProcessor() {
     setPasswordInput('');
     setPasswordError(null);
     setShowPasswordModal(true);
+  };
+
+  // ----------------------------------------------------
+  // CANVAS ORIENTATION CONTROLS (ROTATE 90°, -90°, 180°)
+  // ----------------------------------------------------
+  const handleRotate = (angle: 90 | -90 | 180) => {
+    if (!sourceCanvas) return;
+    setIsProcessing(true);
+    setStatusMessage(`Rotating canvas ${angle > 0 ? `+${angle}` : angle}°...`);
+    setTimeout(() => {
+      try {
+        const rotated = rotateCanvas(sourceCanvas, angle);
+        setSourceCanvas(rotated);
+
+        if (inputMode === 'raw-image') {
+          // Re-center 4 corner quad on the rotated canvas
+          const defQuad = getDefaultQuad(rotated.width, rotated.height);
+          setCropQuad(defQuad);
+          const warped = warpQuadrilateralToCard(rotated, defQuad, CR80_WIDTH_PX, CR80_HEIGHT_PX);
+          const enhanced = enhanceCardCanvas(warped, filterOptions);
+
+          if (rawTargetSide === 'front') {
+            setFrontCardCanvas(enhanced);
+            setAssembledA4Canvas(assembleA4Canvas(enhanced, backCardCanvas, a4Options));
+          } else {
+            setBackCardCanvas(enhanced);
+            setAssembledA4Canvas(assembleA4Canvas(frontCardCanvas, enhanced, a4Options));
+          }
+        } else {
+          extractAndAssembleCards(rotated, inputMode, frontRect, backRect, filterOptions, a4Options);
+        }
+        setStatusMessage(`Rotated ${angle > 0 ? `+${angle}` : angle}° (${rotated.width} × ${rotated.height} px).`);
+      } catch (e: any) {
+        setStatusMessage(`Rotation error: ${e.message}`);
+      } finally {
+        setIsProcessing(false);
+      }
+    }, 30);
+  };
+
+  // ----------------------------------------------------
+  // HOMOGRAPHY PERSPECTIVE WARP ("STRAIGHTEN & CROP")
+  // ----------------------------------------------------
+  const handleStraightenAndCrop = () => {
+    if (!sourceCanvas) return;
+    setIsProcessing(true);
+    setStatusMessage('Computing 2D homography perspective transformation to flat CR80...');
+    setTimeout(() => {
+      try {
+        const warped = warpQuadrilateralToCard(sourceCanvas, cropQuad, CR80_WIDTH_PX, CR80_HEIGHT_PX);
+        const enhanced = enhanceCardCanvas(warped, filterOptions);
+
+        if (rawTargetSide === 'front') {
+          setFrontCardCanvas(enhanced);
+          const a4 = assembleA4Canvas(enhanced, backCardCanvas, a4Options);
+          setAssembledA4Canvas(a4);
+          setStatusMessage('Front card deskewed and mapped to Front slot (1012 × 638 px @ 300 DPI)!');
+        } else {
+          setBackCardCanvas(enhanced);
+          const a4 = assembleA4Canvas(frontCardCanvas, enhanced, a4Options);
+          setAssembledA4Canvas(a4);
+          setStatusMessage('Back card deskewed and mapped to Back slot (1012 × 638 px @ 300 DPI)!');
+        }
+        confetti({ particleCount: 35, spread: 60, origin: { y: 0.7 } });
+      } catch (e: any) {
+        setStatusMessage(`Deskew error: ${e.message}`);
+      } finally {
+        setIsProcessing(false);
+      }
+    }, 40);
+  };
+
+  // ----------------------------------------------------
+  // FINE-TUNING NUDGE CONTROLS (↑, ↓, ←, → by 2px & size)
+  // ----------------------------------------------------
+  const handleNudge = (target: 'front' | 'back', dir: 'up' | 'down' | 'left' | 'right', stepPx = 4) => {
+    if (!sourceCanvas) return;
+    const isFront = target === 'front';
+    const r = isFront ? { ...frontRect } : { ...backRect };
+    const stepX = stepPx / sourceCanvas.width;
+    const stepY = stepPx / sourceCanvas.height;
+
+    if (dir === 'up') r.y = Math.max(0, r.y - stepY);
+    if (dir === 'down') r.y = Math.min(1 - r.height, r.y + stepY);
+    if (dir === 'left') r.x = Math.max(0, r.x - stepX);
+    if (dir === 'right') r.x = Math.min(1 - r.width, r.x + stepX);
+
+    if (isFront) setFrontRect(r);
+    else setBackRect(r);
+
+    extractAndAssembleCards(sourceCanvas, inputMode, isFront ? r : frontRect, isFront ? backRect : r, filterOptions, a4Options);
+  };
+
+  const handleResizeNudge = (target: 'front' | 'back', deltaW: number, deltaH: number) => {
+    if (!sourceCanvas) return;
+    const isFront = target === 'front';
+    const r = isFront ? { ...frontRect } : { ...backRect };
+    const dW = deltaW / sourceCanvas.width;
+    const dH = deltaH / sourceCanvas.height;
+
+    r.width = Math.max(0.1, Math.min(1 - r.x, r.width + dW));
+    r.height = Math.max(0.1, Math.min(1 - r.y, r.height + dH));
+
+    if (isFront) setFrontRect(r);
+    else setBackRect(r);
+
+    extractAndAssembleCards(sourceCanvas, inputMode, isFront ? r : frontRect, isFront ? backRect : r, filterOptions, a4Options);
   };
 
   // ----------------------------------------------------
@@ -305,7 +428,6 @@ export default function CardProcessor() {
           );
           setStatusMessage(`PDF loaded: 300 DPI canvas (${renderResult.width} × ${renderResult.height} px)`);
         } catch (pdfErr: any) {
-          // Detect password protected PDF
           if (
             pdfErr.name === 'PasswordException' ||
             pdfErr.code === 1 ||
@@ -325,7 +447,7 @@ export default function CardProcessor() {
         }
       } else {
         // Raw Image Upload (JPEG, PNG, WebP)
-        setStatusMessage(`Loading image "${fileName}" and running edge contour analysis...`);
+        setStatusMessage(`Loading image "${fileName}"...`);
         const img = await loadImage(file);
         const imgCanvas = document.createElement('canvas');
         imgCanvas.width = img.naturalWidth || img.width;
@@ -352,7 +474,7 @@ export default function CardProcessor() {
           setAssembledA4Canvas(a4);
         }
 
-        setStatusMessage(`Loaded "${fileName}" (${imgCanvas.width} × ${imgCanvas.height} px). Edge contour detected.`);
+        setStatusMessage(`Loaded image (${imgCanvas.width} × ${imgCanvas.height} px). Drag 4 corner pins or rotate.`);
       }
     } catch (err: any) {
       console.error('File load error:', err);
@@ -375,7 +497,6 @@ export default function CardProcessor() {
     setIsProcessing(true);
     setPasswordError(null);
 
-    // If running interactive sample password test
     if (isSamplePasswordTest) {
       if (passwordInput.toUpperCase().trim() === 'RAJE1990') {
         setShowPasswordModal(false);
@@ -497,7 +618,7 @@ export default function CardProcessor() {
 
     ctx.drawImage(sourceCanvas, 0, 0);
 
-    // Draw dark semi-transparent tint
+    // Dark semi-transparent tint
     ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -509,13 +630,13 @@ export default function CardProcessor() {
       const fh = Math.round(frontRect.height * canvas.height);
 
       ctx.drawImage(sourceCanvas, fx, fy, fw, fh, fx, fy, fw, fh);
-      ctx.strokeStyle = '#06b6d4'; // Cyan
-      ctx.lineWidth = Math.max(3, Math.round(canvas.width * 0.0015));
+      ctx.strokeStyle = activeNudgeTarget === 'front' ? '#22d3ee' : '#06b6d4';
+      ctx.lineWidth = activeNudgeTarget === 'front' ? 4 : 2.5;
       ctx.strokeRect(fx, fy, fw, fh);
 
       ctx.fillStyle = '#06b6d4';
       ctx.font = `700 ${Math.max(22, Math.round(canvas.width * 0.012))}px system-ui, sans-serif`;
-      ctx.fillText('FRONT CARD (CR80 RATIO)', fx, fy - 12);
+      ctx.fillText(`FRONT CARD ${activeNudgeTarget === 'front' ? '(ACTIVE)' : ''}`, fx, fy - 12);
 
       drawHandle(ctx, fx, fy, '#06b6d4', canvas.width);
       drawHandle(ctx, fx + fw, fy + fh, '#06b6d4', canvas.width);
@@ -527,31 +648,32 @@ export default function CardProcessor() {
       const bh = Math.round(backRect.height * canvas.height);
 
       ctx.drawImage(sourceCanvas, bx, by, bw, bh, bx, by, bw, bh);
-      ctx.strokeStyle = '#f59e0b'; // Amber
-      ctx.lineWidth = Math.max(3, Math.round(canvas.width * 0.0015));
+      ctx.strokeStyle = activeNudgeTarget === 'back' ? '#fbbf24' : '#f59e0b';
+      ctx.lineWidth = activeNudgeTarget === 'back' ? 4 : 2.5;
       ctx.strokeRect(bx, by, bw, bh);
 
       ctx.fillStyle = '#f59e0b';
       ctx.font = `700 ${Math.max(22, Math.round(canvas.width * 0.012))}px system-ui, sans-serif`;
-      ctx.fillText('BACK CARD (CR80 RATIO)', bx, by - 12);
+      ctx.fillText(`BACK CARD ${activeNudgeTarget === 'back' ? '(ACTIVE)' : ''}`, bx, by - 12);
 
       drawHandle(ctx, bx + bw, by + bh, '#f59e0b', canvas.width);
       drawHandle(ctx, bx, by, '#f59e0b', canvas.width);
     } else {
-      // Raw Image Mode: 4-Corner Quadrilateral
+      // Raw Image Mode: Free 4-Corner Quadrilateral
       const [p0, p1, p2, p3] = cropQuad;
 
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       ctx.lineTo(p1.x, p1.y);
-      ctx.lineTo(p2.y !== undefined ? p2.x : p1.x, p2.y);
+      ctx.lineTo(p2.x, p2.y);
       ctx.lineTo(p3.x, p3.y);
       ctx.closePath();
       ctx.clip();
       ctx.drawImage(sourceCanvas, 0, 0);
       ctx.restore();
 
+      // Connecting boundary line
       ctx.strokeStyle = '#22c55e';
       ctx.lineWidth = Math.max(4, Math.round(canvas.width * 0.002));
       ctx.beginPath();
@@ -562,13 +684,15 @@ export default function CardProcessor() {
       ctx.closePath();
       ctx.stroke();
 
+      // Draw 4 circular pins with labels
+      const pinLabels = ['1: Top-Left (TL)', '2: Top-Right (TR)', '3: Bottom-Right (BR)', '4: Bottom-Left (BL)'];
       cropQuad.forEach((pt, idx) => {
-        drawHandle(ctx, pt.x, pt.y, '#22c55e', canvas.width, String(idx + 1));
+        drawPin(ctx, pt.x, pt.y, '#22c55e', canvas.width, pinLabels[idx]);
       });
     }
-  }, [sourceCanvas, inputMode, frontRect, backRect, cropQuad]);
+  }, [sourceCanvas, inputMode, frontRect, backRect, cropQuad, activeNudgeTarget]);
 
-  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, w: number, label?: string) {
+  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, w: number) {
     const radius = Math.max(8, Math.round(w * 0.007));
     ctx.save();
     ctx.fillStyle = '#ffffff';
@@ -581,7 +705,48 @@ export default function CardProcessor() {
     ctx.restore();
   }
 
-  // Mouse handlers for dragging crop boxes
+  function drawPin(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, w: number, label: string) {
+    const radius = Math.max(14, Math.round(w * 0.012));
+    ctx.save();
+    
+    // Outer glow
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Solid pin
+    ctx.fillStyle = '#22c55e';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Inner dot
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label badge above pin
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 1.5;
+    const textWidth = ctx.measureText(label).width;
+    ctx.fillRect(x - 40, y - radius - 24, 80, 20);
+    ctx.strokeRect(x - 40, y - radius - 24, 80, 20);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label.split(':')[0], x, y - radius - 10);
+
+    ctx.restore();
+  }
+
+  // Mouse handlers for dragging crop boxes and corner pins
   const handleEditorMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = editorCanvasRef.current;
     if (!canvas) return;
@@ -593,7 +758,7 @@ export default function CardProcessor() {
     const clickY = (e.clientY - rect.top) * scaleY;
 
     if (inputMode === 'raw-image') {
-      const hitRadius = Math.max(30, canvas.width * 0.03);
+      const hitRadius = Math.max(35, canvas.width * 0.035);
       for (let i = 0; i < 4; i++) {
         const pt = cropQuad[i];
         const dist = Math.hypot(clickX - pt.x, clickY - pt.y);
@@ -610,6 +775,7 @@ export default function CardProcessor() {
 
       if (clickX >= fx && clickX <= fx + fw && clickY >= fy && clickY <= fy + fh) {
         setActiveRectDrag('front');
+        setActiveNudgeTarget('front');
         setDragStartPos({ x: clickX - fx, y: clickY - fy });
         return;
       }
@@ -621,6 +787,7 @@ export default function CardProcessor() {
 
       if (clickX >= bx && clickX <= bx + bw && clickY >= by && clickY <= by + bh) {
         setActiveRectDrag('back');
+        setActiveNudgeTarget('back');
         setDragStartPos({ x: clickX - bx, y: clickY - by });
         return;
       }
@@ -705,19 +872,22 @@ export default function CardProcessor() {
   // ----------------------------------------------------
   const handleDownloadFront = () => {
     if (!frontCardCanvas) return;
-    downloadCanvasAsPng(frontCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}-front-300dpi.png`);
+    const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
+    downloadCanvasAsPng(frontCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_front_${dateStamp}.png`);
     confetti({ particleCount: 30, spread: 60, origin: { y: 0.8 } });
   };
 
   const handleDownloadBack = () => {
     if (!backCardCanvas) return;
-    downloadCanvasAsPng(backCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}-back-300dpi.png`);
+    const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
+    downloadCanvasAsPng(backCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_back_${dateStamp}.png`);
     confetti({ particleCount: 30, spread: 60, origin: { y: 0.8 } });
   };
 
   const handleDownloadA4 = () => {
     if (!assembledA4Canvas) return;
-    downloadCanvasAsPng(assembledA4Canvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}-A4-print-sheet-300dpi.png`);
+    const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
+    downloadCanvasAsPng(assembledA4Canvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_A4_${dateStamp}.png`);
     confetti({ particleCount: 50, spread: 80, origin: { y: 0.8 } });
   };
 
@@ -751,7 +921,6 @@ export default function CardProcessor() {
     }
   };
 
-  // 1-Click Auto-Enhance Preset
   const handleAutoEnhanceOneClick = () => {
     updateFilter({
       brightness: 8,
@@ -760,7 +929,7 @@ export default function CardProcessor() {
       unsharpAmount: 0.85,
       mode: 'unsharp',
     });
-    setStatusMessage('1-Click Auto-Enhance applied: Brightness +8, Contrast +18, Auto-Levels & Unsharp Mask active.');
+    setStatusMessage('1-Click Auto-Enhance applied (Brightness +8, Contrast +18, Auto-Levels & Unsharp Mask).');
   };
 
   const handleResetFilters = () => {
@@ -768,7 +937,6 @@ export default function CardProcessor() {
     setStatusMessage('Filters reset to default.');
   };
 
-  // A4 Options Update
   const updateA4Options = (newA4Opts: Partial<A4AssemblyOptions>) => {
     const updated = { ...a4Options, ...newA4Opts };
     setA4Options(updated);
@@ -794,57 +962,57 @@ export default function CardProcessor() {
             <span className="font-bold tracking-tight text-white text-sm">
               NP Print Portal
             </span>
-            <span className="hidden sm:inline text-xs text-neutral-400 ml-2">
-              · Ultra-HD 300 DPI Document Engine
+            <span className="hidden lg:inline text-xs text-neutral-400 ml-2 font-mono">
+              · Date: <strong className="text-cyan-400">{formatDDMMYYYY(new Date())}</strong>
             </span>
           </div>
         </div>
 
         {/* Center: Navigation Mode Tabs */}
-        <nav className="flex items-center gap-1 bg-neutral-800/80 p-1 rounded-lg border border-neutral-700/60 text-xs">
+        <nav className="flex items-center gap-1 bg-neutral-800/80 p-1 rounded-lg border border-neutral-700/60 text-xs overflow-x-auto max-w-full scrollbar-none">
           <button
             onClick={() => setActiveViewTab('editor')}
-            className={`px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`px-2.5 sm:px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 shrink-0 ${
               activeViewTab === 'editor'
-                ? 'bg-neutral-900 text-cyan-400 shadow-sm'
+                ? 'bg-neutral-900 text-cyan-400 shadow-sm font-semibold'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Detection & Crop</span>
+            <Sliders className="w-3.5 h-3.5 shrink-0" />
+            <span>Crop & Deskew</span>
           </button>
           <button
             onClick={() => setActiveViewTab('cards')}
-            className={`px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`px-2.5 sm:px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 shrink-0 ${
               activeViewTab === 'cards'
-                ? 'bg-neutral-900 text-cyan-400 shadow-sm'
+                ? 'bg-neutral-900 text-cyan-400 shadow-sm font-semibold'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>CR80 Cards ({CR80_WIDTH_PX}×{CR80_HEIGHT_PX})</span>
+            <Layers className="w-3.5 h-3.5 shrink-0" />
+            <span>CR80 Cards</span>
           </button>
           <button
             onClick={() => setActiveViewTab('preview-a4')}
-            className={`px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 ${
+            className={`px-2.5 sm:px-3 py-1.5 font-medium rounded-md transition-colors flex items-center gap-1.5 shrink-0 ${
               activeViewTab === 'preview-a4'
-                ? 'bg-neutral-900 text-cyan-400 shadow-sm'
+                ? 'bg-neutral-900 text-cyan-400 shadow-sm font-semibold'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>A4 Sheet / Tray Preview</span>
+            <Printer className="w-3.5 h-3.5 shrink-0" />
+            <span>A4 Sheet</span>
           </button>
         </nav>
 
         {/* Right: Print 1:1 Scale Action */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleTriggerPrint}
-            className="px-4 py-2 text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-neutral-950 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+            className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-neutral-950 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
           >
-            <Printer className="w-4 h-4" />
-            <span>Print 1:1 Scale</span>
+            <Printer className="w-4 h-4 shrink-0" />
+            <span>Print 1:1</span>
           </button>
         </div>
       </header>
@@ -852,51 +1020,44 @@ export default function CardProcessor() {
       {/* ---------------------------------------------------- */}
       {/* 2. INTERACTIVE TEST SUITE / DEMO BAR                  */}
       {/* ---------------------------------------------------- */}
-      <div className="no-print bg-neutral-900/60 border-b border-neutral-800 px-6 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-neutral-400">
-          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span className="font-semibold text-neutral-300">Quick Test Suite:</span>
-          <span className="text-[11px] text-neutral-500 hidden md:inline">
-            1-Click realistic counter test files:
-          </span>
+      <div className="no-print bg-neutral-900/60 border-b border-neutral-800 px-3 sm:px-6 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-2 text-xs w-full overflow-hidden">
+        <div className="flex items-center gap-2 text-neutral-400 shrink-0">
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="font-semibold text-neutral-300">Quick Test:</span>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {/* Test 1: Clean e-Aadhaar */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full pb-0.5 scrollbar-none">
           <button
             onClick={loadSampleAadhaar}
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+            className="px-2 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
           >
-            <FileText className="w-3 h-3 text-cyan-400" />
+            <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
             <span>1. e-Aadhaar PDF</span>
           </button>
 
-          {/* Test 2: Password-Protected PDF Lock Test */}
           <button
             onClick={loadSamplePasswordLockTest}
-            className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-            title="Tests password unlock flow. Test password is RAJE1990"
+            className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+            title="Tests password unlock flow. Test password: RAJE1990"
           >
-            <Lock className="w-3 h-3 text-amber-400" />
-            <span>2. Password PDF Test (PW: RAJE1990)</span>
+            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+            <span>2. Password PDF (RAJE1990)</span>
           </button>
 
-          {/* Test 3: Skewed Mobile Camera */}
           <button
             onClick={loadSampleRawMobileScan}
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+            className="px-2 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
           >
-            <Camera className="w-3 h-3 text-emerald-400" />
-            <span>3. Skewed Mobile Photo</span>
+            <Camera className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span>3. Skewed Photo</span>
           </button>
 
-          {/* Test 4: Dark / Shadowed Scan */}
           <button
             onClick={loadSampleDarkScan}
-            className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+            className="px-2 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-md font-medium text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
           >
-            <Sun className="w-3 h-3 text-rose-400" />
-            <span>4. Dark / Shadowed Scan</span>
+            <Sun className="w-3 h-3 text-rose-400 shrink-0" />
+            <span>4. Dark Scan</span>
           </button>
         </div>
       </div>
@@ -907,10 +1068,10 @@ export default function CardProcessor() {
       <div className="no-print flex-1 flex flex-col lg:flex-row overflow-hidden">
         
         {/* LEFT CONTROL SIDEBAR */}
-        <aside className="w-full lg:w-96 border-r border-neutral-800 bg-neutral-900/60 p-5 flex flex-col gap-6 overflow-y-auto shrink-0">
+        <aside className="w-full lg:w-96 border-r border-neutral-800 bg-neutral-900/60 p-5 flex flex-col gap-5 overflow-y-auto shrink-0">
           
-          {/* Source Document Section */}
-          <div className="flex flex-col gap-3">
+          {/* Document Source Section */}
+          <div className="flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                 Document Upload
@@ -939,8 +1100,195 @@ export default function CardProcessor() {
 
           <div className="h-px bg-neutral-800" />
 
-          {/* REAL-TIME CARD ENHANCEMENT CONTROLS */}
-          <div className="flex flex-col gap-3.5">
+          {/* CROP MODE SELECTOR */}
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+              Cropping Engine Mode
+            </span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                onClick={() => setInputMode('pdf-preset')}
+                className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                  inputMode === 'pdf-preset'
+                    ? 'bg-neutral-800 border-cyan-500 text-cyan-300 font-bold'
+                    : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:border-neutral-700'
+                }`}
+              >
+                <div>UIDAI / PAN Preset</div>
+                <div className="text-[10px] text-neutral-500 font-normal">Dual Box Split</div>
+              </button>
+
+              <button
+                onClick={() => setInputMode('raw-image')}
+                className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                  inputMode === 'raw-image'
+                    ? 'bg-neutral-800 border-cyan-500 text-cyan-300 font-bold'
+                    : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:border-neutral-700'
+                }`}
+              >
+                <div>Free 4-Corner Quad</div>
+                <div className="text-[10px] text-neutral-500 font-normal">Homography Warp</div>
+              </button>
+            </div>
+          </div>
+
+          {/* FINE-TUNING NUDGE CONTROLS FOR PDF (Image 2 Fix) */}
+          {inputMode === 'pdf-preset' && (
+            <div className="bg-neutral-950/80 border border-neutral-800 rounded-xl p-3.5 flex flex-col gap-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-neutral-300 flex items-center gap-1.5">
+                  <Move className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Precision Nudge (2px)</span>
+                </span>
+                <div className="flex items-center gap-1 bg-neutral-900 p-0.5 rounded border border-neutral-800">
+                  <button
+                    onClick={() => setActiveNudgeTarget('front')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                      activeNudgeTarget === 'front' ? 'bg-cyan-500 text-neutral-950' : 'text-neutral-400'
+                    }`}
+                  >
+                    Front Box
+                  </button>
+                  <button
+                    onClick={() => setActiveNudgeTarget('back')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                      activeNudgeTarget === 'back' ? 'bg-amber-500 text-neutral-950' : 'text-neutral-400'
+                    }`}
+                  >
+                    Back Box
+                  </button>
+                </div>
+              </div>
+
+              {/* D-Pad Buttons */}
+              <div className="flex flex-col items-center gap-1 py-1">
+                <button
+                  onClick={() => handleNudge(activeNudgeTarget, 'up', 4)}
+                  className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-colors"
+                  title="Nudge Up"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleNudge(activeNudgeTarget, 'left', 4)}
+                    className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-colors"
+                    title="Nudge Left"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] text-neutral-500 font-mono">MOVE</span>
+                  <button
+                    onClick={() => handleNudge(activeNudgeTarget, 'right', 4)}
+                    className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-colors"
+                    title="Nudge Right"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => handleNudge(activeNudgeTarget, 'down', 4)}
+                  className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300 transition-colors"
+                  title="Nudge Down"
+                >
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Width & Height Resizers */}
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-850">
+                <div className="flex items-center justify-between bg-neutral-900 p-1.5 rounded border border-neutral-800">
+                  <span className="text-[11px] text-neutral-400">Width:</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleResizeNudge(activeNudgeTarget, -4, 0)}
+                      className="p-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleResizeNudge(activeNudgeTarget, 4, 0)}
+                      className="p-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between bg-neutral-900 p-1.5 rounded border border-neutral-800">
+                  <span className="text-[11px] text-neutral-400">Height:</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleResizeNudge(activeNudgeTarget, 0, -4)}
+                      className="p-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleResizeNudge(activeNudgeTarget, 0, 4)}
+                      className="p-1 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* FREE-FORM 4-CORNER HOMOGRAPHY CONTROLS (Image 1 Fix) */}
+          {inputMode === 'raw-image' && (
+            <div className="bg-neutral-950/80 border border-neutral-800 rounded-xl p-3.5 flex flex-col gap-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-neutral-300 flex items-center gap-1.5">
+                  <Maximize className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Free 4-Corner Homography</span>
+                </span>
+                <span className="text-[10px] text-neutral-500 font-mono">4 Pins Active</span>
+              </div>
+
+              <p className="text-[11px] text-neutral-400 leading-relaxed">
+                Drag the 4 circular green pins to the 4 corners of the ID card on the bed/table photo.
+              </p>
+
+              {/* Target Slot Toggle */}
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-neutral-400">Map Deskewed Output To:</span>
+                <div className="flex items-center gap-1 bg-neutral-900 p-0.5 rounded border border-neutral-800">
+                  <button
+                    onClick={() => setRawTargetSide('front')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                      rawTargetSide === 'front' ? 'bg-cyan-500 text-neutral-950' : 'text-neutral-400'
+                    }`}
+                  >
+                    Front Slot
+                  </button>
+                  <button
+                    onClick={() => setRawTargetSide('back')}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                      rawTargetSide === 'back' ? 'bg-amber-500 text-neutral-950' : 'text-neutral-400'
+                    }`}
+                  >
+                    Back Slot
+                  </button>
+                </div>
+              </div>
+
+              {/* Straighten & Crop Button */}
+              <button
+                onClick={handleStraightenAndCrop}
+                className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Straighten & Crop (CR80 Homography)</span>
+              </button>
+            </div>
+          )}
+
+          <div className="h-px bg-neutral-800" />
+
+          {/* REAL-TIME ENHANCEMENT CONTROLS */}
+          <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
@@ -954,7 +1302,6 @@ export default function CardProcessor() {
               </button>
             </div>
 
-            {/* 1-Click Auto-Enhance Button */}
             <button
               onClick={handleAutoEnhanceOneClick}
               className="w-full py-2 px-3 bg-gradient-to-r from-cyan-500/20 via-cyan-500/10 to-emerald-500/20 hover:from-cyan-500/30 hover:to-emerald-500/30 border border-cyan-500/40 rounded-lg text-xs font-bold text-cyan-300 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
@@ -963,9 +1310,7 @@ export default function CardProcessor() {
               <span>1-Click Auto-Enhance (White Paper)</span>
             </button>
 
-            {/* Sliders */}
             <div className="space-y-3 bg-neutral-950/70 p-3 rounded-xl border border-neutral-800/80 text-xs">
-              {/* Brightness Slider (-50% to +50%) */}
               <div>
                 <div className="flex justify-between text-neutral-400 mb-1">
                   <span className="flex items-center gap-1">
@@ -986,7 +1331,6 @@ export default function CardProcessor() {
                 />
               </div>
 
-              {/* Contrast Slider (-50% to +50%) */}
               <div>
                 <div className="flex justify-between text-neutral-400 mb-1">
                   <span className="flex items-center gap-1">
@@ -1007,7 +1351,6 @@ export default function CardProcessor() {
                 />
               </div>
 
-              {/* Cut-Guide Border (0.5pt subtle outline for precise scissor/guillotine cutting) */}
               <label className="flex items-center justify-between text-neutral-300 cursor-pointer pt-1 border-t border-neutral-850">
                 <span className="flex items-center gap-1.5">
                   <Scissors className="w-3.5 h-3.5 text-neutral-400" />
@@ -1020,84 +1363,6 @@ export default function CardProcessor() {
                   className="rounded bg-neutral-800 border-neutral-700 text-cyan-500 focus:ring-0 cursor-pointer"
                 />
               </label>
-
-              {/* Auto-Levels Checkbox */}
-              <label className="flex items-center justify-between text-neutral-300 cursor-pointer pt-1">
-                <span>Auto-Levels (Clean White Paper)</span>
-                <input
-                  type="checkbox"
-                  checked={filterOptions.autoLevels}
-                  onChange={(e) => updateFilter({ autoLevels: e.target.checked })}
-                  className="rounded bg-neutral-800 border-neutral-700 text-cyan-500 focus:ring-0 cursor-pointer"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div className="h-px bg-neutral-800" />
-
-          {/* PRINT CALIBRATION & HARDWARE PRESETS */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
-                <Ruler className="w-3.5 h-3.5 text-cyan-400" />
-                <span>1:1 Scale Print Output</span>
-              </span>
-              <span className="text-[10px] text-emerald-400 font-mono">Calibrated</span>
-            </div>
-
-            {/* Target Media Preset Toggle */}
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                onClick={() => updateA4Options({ printTargetPreset: 'a4-paper', layout: 'side-by-side' })}
-                className={`p-2 rounded-lg border text-left transition-colors ${
-                  a4Options.printTargetPreset !== 'epson-pvc-tray'
-                    ? 'bg-neutral-800 border-cyan-500 text-cyan-300'
-                    : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-                }`}
-              >
-                <div className="font-semibold text-xs text-white">A4 Glossy / Normal</div>
-                <div className="text-[10px] text-neutral-500">Side-by-side + Cut Marks</div>
-              </button>
-
-              <button
-                onClick={() => updateA4Options({ printTargetPreset: 'epson-pvc-tray' })}
-                className={`p-2 rounded-lg border text-left transition-colors ${
-                  a4Options.printTargetPreset === 'epson-pvc-tray'
-                    ? 'bg-neutral-800 border-cyan-500 text-cyan-300'
-                    : 'bg-neutral-950 border-neutral-800 text-neutral-400'
-                }`}
-              >
-                <div className="font-semibold text-xs text-white">Epson PVC Tray</div>
-                <div className="text-[10px] text-neutral-500">L8050 / L805 Dual Slot</div>
-              </button>
-            </div>
-
-            {/* Physical Calibration Scale Note */}
-            <div className="bg-neutral-950/80 border border-neutral-800 p-2.5 rounded-lg text-[11px] text-neutral-400 space-y-1">
-              <div className="flex items-center justify-between text-neutral-200 font-medium">
-                <span>Ruler Calibration Block:</span>
-                <span className="text-cyan-400 font-mono">50.0 mm</span>
-              </div>
-              <p className="text-[10px] text-neutral-500 leading-relaxed">
-                A physical 50mm test ruler is included on the sheet bottom so operators can verify accuracy with a scale.
-              </p>
-            </div>
-
-            {/* Target Printer Profile Dropdown */}
-            <div>
-              <span className="text-[11px] text-neutral-400 block mb-1">Printer Profile:</span>
-              <select
-                value={selectedPrinterPreset}
-                onChange={(e) => setSelectedPrinterPreset(e.target.value)}
-                className="w-full bg-neutral-950 border border-neutral-800 rounded px-2.5 py-1.5 text-xs text-cyan-300 focus:outline-none focus:border-cyan-500 font-medium"
-              >
-                {PRINTER_HARDWARE_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
         </aside>
@@ -1115,7 +1380,7 @@ export default function CardProcessor() {
             <div className="flex items-center gap-3 text-neutral-500 font-mono text-[11px]">
               <span>Card: {CR80_WIDTH_MM}×{CR80_HEIGHT_MM}mm</span>
               <span>·</span>
-              <span>300 DPI ({CR80_WIDTH_PX}×{CR80_HEIGHT_PX}px)</span>
+              <span>300 DPI</span>
               <span>·</span>
               <span>A4: {A4_WIDTH_MM}×{A4_HEIGHT_MM}mm</span>
             </div>
@@ -1126,26 +1391,68 @@ export default function CardProcessor() {
             
             {/* VIEW 1: DETECTION & CROP EDITOR */}
             {activeViewTab === 'editor' && (
-              <div className="max-w-4xl w-full flex flex-col items-center gap-4">
-                <div className="w-full flex items-center justify-between text-xs text-neutral-400">
+              <div className="max-w-4xl w-full flex flex-col items-center gap-3">
+                
+                {/* CANVAS ORIENTATION & ROTATION TOOLBAR (Image 1 Fix) */}
+                <div className="w-full bg-neutral-900/90 border border-neutral-800 rounded-xl px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  
+                  {/* Left: Rotate Buttons */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-neutral-400 font-medium mr-1 text-[11px]">Orientation:</span>
+                    <button
+                      onClick={() => handleRotate(-90)}
+                      className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Rotate Counter-Clockwise (Left 90°)"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Left 90°</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleRotate(90)}
+                      className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Rotate Clockwise (Right 90°)"
+                    >
+                      <RotateCw className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Right 90°</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleRotate(180)}
+                      className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Flip Upside Down (180°)"
+                    >
+                      <FlipVertical className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Flip 180°</span>
+                    </button>
+                  </div>
+
+                  {/* Right: Deskew / Crop Action */}
                   <div className="flex items-center gap-2">
-                    <Move className="w-4 h-4 text-cyan-400" />
-                    <span>
-                      {inputMode === 'pdf-preset'
-                        ? 'Drag boxes to adjust Front (Cyan) & Back (Amber) cropping sections'
-                        : 'Drag any of the 4 corner handles to adjust perspective deskewing'}
+                    {inputMode === 'raw-image' && (
+                      <button
+                        onClick={handleStraightenAndCrop}
+                        className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Straighten & Crop (To {rawTargetSide.toUpperCase()})</span>
+                      </button>
+                    )}
+
+                    <span className="font-mono text-neutral-500 text-[11px]">
+                      {sourceCanvas ? `${sourceCanvas.width} × ${sourceCanvas.height} px` : ''}
                     </span>
                   </div>
-                  <span className="font-mono text-neutral-500">Interactive Canvas Viewport</span>
                 </div>
 
+                {/* Canvas Mount */}
                 <div className="relative border border-neutral-800 rounded-xl overflow-hidden shadow-2xl bg-neutral-900 flex items-center justify-center p-2">
                   <canvas
                     ref={editorCanvasRef}
                     onMouseDown={handleEditorMouseDown}
                     onMouseMove={handleEditorMouseMove}
                     onMouseUp={handleEditorMouseUp}
-                    className="max-h-[68vh] max-w-full w-auto object-contain cursor-crosshair rounded-lg"
+                    className="max-h-[66vh] max-w-full w-auto object-contain cursor-crosshair rounded-lg"
                   />
                 </div>
               </div>
@@ -1310,7 +1617,6 @@ export default function CardProcessor() {
               </button>
             </div>
 
-            {/* Hint Box for Indian Online Centers */}
             <div className="bg-neutral-950/90 border border-neutral-800 rounded-xl p-3.5 text-xs space-y-2">
               <div className="flex items-center gap-1.5 text-amber-300 font-semibold text-[11px]">
                 <KeyRound className="w-3.5 h-3.5" />
@@ -1319,18 +1625,13 @@ export default function CardProcessor() {
               <ul className="text-neutral-400 space-y-1 text-[11px] list-disc list-inside">
                 <li>
                   <strong className="text-neutral-200">e-Aadhaar:</strong> First 4 letters of Name (CAPITAL) + 4-digit Birth Year (e.g.{' '}
-                  <span className="font-mono text-cyan-400">RAJE1990</span> for Rajesh Sharma born 1990).
+                  <span className="font-mono text-cyan-400">RAJE1990</span>).
                 </li>
                 <li>
                   <strong className="text-neutral-200">e-PAN Card:</strong> Date of Birth in DDMMYYYY format (e.g.{' '}
                   <span className="font-mono text-cyan-400">12051990</span>).
                 </li>
               </ul>
-              {isSamplePasswordTest && (
-                <div className="text-[11px] bg-cyan-950/40 border border-cyan-500/30 rounded p-2 text-cyan-300">
-                  <strong>Demo Mode Hint:</strong> Test password is <span className="font-mono font-bold">RAJE1990</span>.
-                </div>
-              )}
             </div>
 
             {passwordError && (

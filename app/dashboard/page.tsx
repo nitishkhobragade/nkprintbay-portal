@@ -5,99 +5,276 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * app/dashboard/page.tsx
- * Central Tool Dashboard & Service Hub for NP Print Portal.
- * Features categorized service grid with badges, quick search,
- * user license status header, and tool launcher.
+ * High-Converting Homepage & Services Showcase for NK PrintBay.
+ * Features:
+ * - Compact Header Banner (Services promoted above the fold)
+ * - Visual Photo/Illustration Thumbnails for every service (matches Image 4)
+ * - Interactive Favorites (Heart Icon) stored in localStorage
+ * - Category Tabs & Live Search
+ * - 1-Click Launch for all 24+ Cyber Cafe & CSC Counter Tools
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  CreditCard,
-  Camera,
-  Layers,
-  FileCheck2,
-  Sparkles,
   Search,
-  Printer,
-  ShieldCheck,
   Zap,
   ArrowRight,
-  LogOut,
-  Clock,
-  Smartphone,
+  Printer,
+  ShieldCheck,
   CheckCircle2,
-  HelpCircle
+  Heart,
+  Layers,
+  ChevronRight,
+  ExternalLink,
+  Sparkles,
+  Gift
 } from 'lucide-react';
 import { SessionUser } from '../../src/lib/authStore';
+import ServiceThumbnail, { ServiceThumbnailType } from '../../src/components/ServiceThumbnail';
+import AllServicesDirectoryModal from '../../src/components/AllServicesDirectoryModal';
 
 export type PortalToolId =
   | 'card-engine'
   | 'passport-maker'
+  | 'passport-studio'
+  | 'smart-id'
   | 'govt-resizer'
   | 'multi-card'
-  | 'signature-enhancer';
+  | 'signature-enhancer'
+  | 'invoice-maker'
+  | 'ai-upscaler'
+  | 'cash-counter'
+  | 'thermal-slip'
+  | 'payment-standee'
+  | 'rate-banner'
+  | 'wa-direct'
+  | 'age-calc'
+  | 'land-calc'
+  | 'master-compressor';
 
-interface ToolItem {
-  id: PortalToolId;
+export interface VisualServiceCard {
+  id: string;
   title: string;
-  category: 'id-cards' | 'photos' | 'govt-forms' | 'enhancement';
   description: string;
-  badge: 'CORE' | 'HOT' | 'NEW' | 'PRO' | 'FREE';
+  category: 'id-cards' | 'photos' | 'govt-forms' | 'enhancement' | 'utilities';
+  badge: 'HOT' | 'FREE' | 'NEW' | 'AI' | 'PRO';
   badgeColor: string;
-  icon: React.ComponentType<{ className?: string }>;
-  features: string[];
+  thumbnailType: ServiceThumbnailType;
+  toolId: PortalToolId;
+  defaultFavorite?: boolean;
 }
 
-const TOOLS_CATALOG: ToolItem[] = [
+const ALL_VISUAL_SERVICES: VisualServiceCard[] = [
   {
-    id: 'card-engine',
-    title: 'Ultra-HD ID Card Processor',
+    id: 'passport-studio',
+    title: '1-Click Passport Photo Studio',
+    description: 'Webcam capture, biometric oval guide, 1-click background switch, 4x6 & A4 multi-grids with 50mm calibration test scale.',
+    category: 'photos',
+    badge: 'NEW',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'passport-grid',
+    toolId: 'passport-studio',
+    defaultFavorite: true,
+  },
+  {
+    id: 'smart-id',
+    title: 'Dual-Mode Smart ID Processor',
+    description: '1-Click e-Aadhaar PDF auto-crop & built-in vector color card renderer (Aadhaar 2.0, PAN 2.0, Voter 2.0) with Epson L8050 PVC tray support.',
     category: 'id-cards',
-    description: 'Auto-detect Aadhaar, PAN, and raw mobile scans, apply 300 DPI deskewing, and mount on 1:1 scale A4 print canvas.',
     badge: 'HOT',
-    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
-    icon: CreditCard,
-    features: ['PDF.js 300 DPI', 'Sobel Corner Detection', 'Homography Warp', 'A4 Print Layout'],
+    badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+    thumbnailType: 'aadhaar-2',
+    toolId: 'smart-id',
+    defaultFavorite: true,
+  },
+  {
+    id: 'master-compressor',
+    title: 'Master Batch Image & PDF Compressor',
+    description: 'Multi-file compressor with custom target KB, individual rename, delete cross, and sequential 1-by-1 downloads without ZIP.',
+    category: 'enhancement',
+    badge: 'HOT',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'pdf-compress',
+    toolId: 'master-compressor',
+    defaultFavorite: true,
+  },
+  {
+    id: 'aadhaar-2',
+    title: 'Color Aadhar Maker AI Instant 2.0',
+    description: 'Convert e-Aadhaar to HD Color PVC Card with 1-Click Auto Crop & 300 DPI CR80 alignment.',
+    category: 'id-cards',
+    badge: 'HOT',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    thumbnailType: 'aadhaar-2',
+    toolId: 'card-engine',
+    defaultFavorite: true,
+  },
+  {
+    id: 'epson-tray',
+    title: 'Epson L8050 PVC Card Maker & Print',
+    description: 'Calibrated dual-card tray layout for Epson L8050 & L805 printer PVC holders.',
+    category: 'id-cards',
+    badge: 'NEW',
+    badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+    thumbnailType: 'epson-printer',
+    toolId: 'card-engine',
+    defaultFavorite: true,
+  },
+  {
+    id: 'ayushman-cropper',
+    title: 'Ayushman Card AI Cropper',
+    description: 'Auto crop PM-JAY Golden Health card Front & Back to 1:1 CR80 PVC dimensions.',
+    category: 'id-cards',
+    badge: 'HOT',
+    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    thumbnailType: 'ayushman',
+    toolId: 'card-engine',
+    defaultFavorite: true,
+  },
+  {
+    id: 'apaar-cropper',
+    title: 'APAAR ID Card AI Cropper',
+    description: 'One Nation One Student ID auto-extraction and single-click PVC print output.',
+    category: 'id-cards',
+    badge: 'NEW',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'apaar',
+    toolId: 'card-engine',
   },
   {
     id: 'passport-maker',
-    title: 'Passport & Visa Photo Grid Maker',
+    title: 'Passport Photo Grid Maker',
+    description: 'Print 6, 8, 12, or 32 passport copies on 4x6" or A4 paper with biometric face guides.',
     category: 'photos',
-    description: 'Generate 6, 8, 12, or 32 passport copies on 4x6" or A4 glossy paper with biometric face guides and Name/DOP strips.',
-    badge: 'PRO',
-    badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-    icon: Camera,
-    features: ['4x6" & A4 Presets', 'Biometric Oval Guide', 'Name & Date Strip', 'Scissor Cut Marks'],
+    badge: 'HOT',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    thumbnailType: 'passport-grid',
+    toolId: 'passport-maker',
+    defaultFavorite: true,
   },
   {
-    id: 'multi-card',
-    title: 'Multi-Card Batch Sheet Processor',
-    category: 'id-cards',
-    description: 'Place 2 to 5 different ID cards (Front & Back pairs) onto a single A4 page with auto-alignment and folding lines.',
-    badge: 'NEW',
-    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-    icon: Layers,
-    features: ['Up to 5 Cards', '10 Sides on 1 A4', 'Smart Auto-Spacing', 'Lamination Margins'],
+    id: 'ai-upscaler',
+    title: 'AI Image Upscaler 2.0 (Real-ESRGAN)',
+    description: '4x super-resolution running 100% in browser with smart face illumination for dark photos.',
+    category: 'enhancement',
+    badge: 'AI',
+    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+    thumbnailType: 'ai-upscaler',
+    toolId: 'ai-upscaler',
+    defaultFavorite: true,
   },
   {
     id: 'govt-resizer',
     title: 'Govt Form Photo & Signature Resizer',
+    description: 'Compress candidate photo & signature to exact KB windows (20-50 KB / 10-20 KB) for SSC/UPSC.',
     category: 'govt-forms',
-    description: 'Compress candidate photo & signature to exact KB windows (20-50 KB, 10-20 KB) for SSC, UPSC, IBPS, and State PSC forms.',
-    badge: 'CORE',
-    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-    icon: FileCheck2,
-    features: ['Exact KB Target', 'Binary Search Engine', 'SSC / UPSC / IBPS Presets', 'Pixel Dimension Lock'],
+    badge: 'HOT',
+    badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    thumbnailType: 'govt-resizer',
+    toolId: 'govt-resizer',
+    defaultFavorite: true,
   },
   {
     id: 'signature-enhancer',
-    title: 'Signature & Stamp Enhancer',
+    title: 'Signature & Thumb Stamp Enhancer',
+    description: 'Enhance contrast, clean shadows, and produce dark ink signatures on white paper.',
     category: 'enhancement',
-    description: 'Remove phone shadows, yellowish paper grain, and uneven ink. Output clean transparent PNGs or deep royal blue signatures.',
     badge: 'FREE',
-    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-    icon: Sparkles,
-    features: ['Shadow Removal', 'Transparent PNG Export', 'Binarization Threshold', 'Blue Fountain Ink'],
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'signature-stamp',
+    toolId: 'signature-enhancer',
+  },
+  {
+    id: 'multi-card',
+    title: 'Multi Card Print Batch Tool (A4)',
+    description: 'Place 2 to 5 different cards (Aadhaar, PAN, Voter, Ration) on 1 single A4 sheet with fold lines.',
+    category: 'id-cards',
+    badge: 'HOT',
+    badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    thumbnailType: 'multi-card',
+    toolId: 'multi-card',
+    defaultFavorite: true,
+  },
+  {
+    id: 'invoice-bill',
+    title: 'Modern Invoice & GST Bill Maker',
+    description: 'Create professional A4 & 2/3-inch thermal bills with dynamic UPI QR & WhatsApp share.',
+    category: 'utilities',
+    badge: 'FREE',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'invoice-bill',
+    toolId: 'invoice-maker',
+    defaultFavorite: true,
+  },
+  {
+    id: 'cash-counter',
+    title: 'Daily Ledger & Cash Counter Tally',
+    description: 'Fast note denomination counter (₹500, ₹200, ₹100) with live total & words for shop closing.',
+    category: 'utilities',
+    badge: 'FREE',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'cash-counter',
+    toolId: 'cash-counter',
+  },
+  {
+    id: 'thermal-slip',
+    title: 'AEPS & Cash Withdrawal Thermal Slip',
+    description: 'Print 2-inch and 3-inch POS thermal slips for AePS cash out, money transfer & banking receipts.',
+    category: 'utilities',
+    badge: 'NEW',
+    badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+    thumbnailType: 'thermal-slip',
+    toolId: 'thermal-slip',
+  },
+  {
+    id: 'payment-standee',
+    title: 'Payment Standee UPI QR Generator',
+    description: 'Design ready-to-print branded acrylic shop counter standees with your Google Pay/PhonePe QR.',
+    category: 'utilities',
+    badge: 'HOT',
+    badgeColor: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+    thumbnailType: 'payment-standee',
+    toolId: 'payment-standee',
+  },
+  {
+    id: 'shop-rate-banner',
+    title: 'Shop Service Rate Banner Designer',
+    description: 'Print ready-to-hang A4 cyber cafe price charts (Xerox, PVC, Lamination, Online Forms).',
+    category: 'utilities',
+    badge: 'NEW',
+    badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+    thumbnailType: 'rate-banner',
+    toolId: 'rate-banner',
+  },
+  {
+    id: 'direct-wa-chat',
+    title: 'Direct WhatsApp Customer Chat',
+    description: 'Send print PDF and receipts to customer mobile number without saving as contact.',
+    category: 'utilities',
+    badge: 'FREE',
+    badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    thumbnailType: 'wa-chat',
+    toolId: 'wa-direct',
+  },
+  {
+    id: 'age-calc',
+    title: 'Govt Exam Age & DOB Calculator',
+    description: 'Calculate exact years, months, and days for SSC, UPSC, and Railway cutoff dates.',
+    category: 'utilities',
+    badge: 'FREE',
+    badgeColor: 'bg-pink-500/20 text-pink-300 border-pink-500/40',
+    thumbnailType: 'age-calc',
+    toolId: 'age-calc',
+  },
+  {
+    id: 'land-calc',
+    title: 'Land Area Converter (Katha / Bigha)',
+    description: 'Convert Katha, Bigha, Satak, Decimal, Dismil, Acre, and Sqft for registry & revenue forms.',
+    category: 'utilities',
+    badge: 'FREE',
+    badgeColor: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+    thumbnailType: 'land-calc',
+    toolId: 'land-calc',
   },
 ];
 
@@ -105,195 +282,267 @@ interface DashboardPageProps {
   currentUser?: SessionUser | null;
   onSelectTool: (toolId: PortalToolId) => void;
   onOpenAdminPortal?: () => void;
-  onLogout?: () => void;
+  onOpenPricing?: () => void;
 }
 
 export default function DashboardPage({
   currentUser,
   onSelectTool,
   onOpenAdminPortal,
-  onLogout,
+  onOpenPricing,
 }: DashboardPageProps) {
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isDirectoryOpen, setIsDirectoryOpen] = useState<boolean>(false);
+  const [favorites, setFavorites] = useState<string[]>(['aadhaar-2', 'epson-tray', 'ayushman-cropper', 'passport-maker', 'govt-resizer']);
 
-  const filteredTools = TOOLS_CATALOG.filter((tool) => {
-    const matchesSearch =
-      tool.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      tool.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      tool.features.some((f) => f.toLowerCase().includes(searchQuery.toLowerCase()));
+  // Load favorites from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('np_user_favorite_tools');
+      if (stored) {
+        setFavorites(JSON.parse(stored));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
-    if (selectedCategory === 'all') return matchesSearch;
-    return matchesSearch && tool.category === selectedCategory;
-  });
+  const toggleFavorite = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    const updated = favorites.includes(id)
+      ? favorites.filter((fav) => fav !== id)
+      : [...favorites, id];
+    setFavorites(updated);
+    try {
+      localStorage.setItem('np_user_favorite_tools', JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+  };
+
+  const filteredTools = useMemo(() => {
+    return ALL_VISUAL_SERVICES.filter((tool) => {
+      // Category filter
+      if (selectedCategory === 'favorites') {
+        if (!favorites.includes(tool.id)) return false;
+      } else if (selectedCategory !== 'all' && tool.category !== selectedCategory) {
+        return false;
+      }
+
+      // Search filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        return (
+          tool.title.toLowerCase().includes(q) ||
+          tool.description.toLowerCase().includes(q) ||
+          tool.category.toLowerCase().includes(q)
+        );
+      }
+
+      return true;
+    });
+  }, [selectedCategory, searchQuery, favorites]);
 
   return (
-    <div className="w-full min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
-      
+    <div className="flex-1 flex flex-col bg-neutral-950 text-neutral-100 overflow-y-auto">
       {/* ---------------------------------------------------- */}
-      {/* HERO SECTION                                         */}
+      {/* 1. COMPACT PROMO & ANNOUNCEMENT HEADER BANNER        */}
       {/* ---------------------------------------------------- */}
-      <section className="border-b border-neutral-800 bg-gradient-to-b from-neutral-900/90 to-neutral-950 px-6 py-10">
-        <div className="max-w-7xl mx-auto flex flex-col gap-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-                <span className="text-xs font-mono text-cyan-400 uppercase tracking-widest font-semibold">
-                  Professional Print Portal & Cyber Cafe Suite
-                </span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-                Specialized Document & Print Utilities
-              </h1>
-              <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl leading-relaxed">
-                Client-side Canvas engines at true 300 DPI print standards. Process ID cards, format passport photos, compress exam files, and clean signatures with zero cloud upload costs.
-              </p>
-            </div>
+      <div className="no-print bg-neutral-900/90 border-b border-neutral-800 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs w-full">
+        <div className="flex items-center gap-2 flex-wrap text-neutral-300">
+          <span className="flex items-center gap-1.5 font-bold text-white">
+            <Gift className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>New Operator Gift:</span>
+          </span>
+          <span className="text-cyan-300 font-semibold">
+            {currentUser?.freePrintsLeft ?? 4} Free HD Prints Unlocked!
+          </span>
+          <span className="text-neutral-600 hidden sm:inline">·</span>
+          <span className="text-neutral-400 hidden md:inline">
+            100% Client-Side Private · Direct CR80 & 1:1 Scale · Epson L8050 Supported
+          </span>
+        </div>
 
-            {/* Quick Stats Banner */}
-            <div className="flex items-center gap-3 bg-neutral-900/80 border border-neutral-800 p-3 rounded-xl shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-                  <Printer className="w-4 h-4" />
-                </div>
-                <div className="text-xs">
-                  <span className="text-neutral-400 block text-[10px]">Print Engine</span>
-                  <span className="font-mono font-bold text-white">300 DPI Native</span>
-                </div>
-              </div>
-              <div className="h-6 w-px bg-neutral-800" />
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <Zap className="w-4 h-4" />
-                </div>
-                <div className="text-xs">
-                  <span className="text-neutral-400 block text-[10px]">Performance</span>
-                  <span className="font-mono font-bold text-white">100% Client-Side</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="flex items-center gap-2 ml-auto">
+          {onOpenPricing && (
+            <button
+              onClick={onOpenPricing}
+              className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+            >
+              Plans (₹29/₹199)
+            </button>
+          )}
 
-          {/* Search Bar & Category Filter Pills */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-            <div className="relative w-full sm:w-96">
-              <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search tools, formats, SSC, 4x6, CR80..."
-                className="w-full bg-neutral-900/90 border border-neutral-800 rounded-xl pl-10 pr-4 py-2 text-xs text-neutral-200 placeholder:text-neutral-500 focus:outline-none focus:border-cyan-500 transition-colors shadow-inner"
-              />
-            </div>
+          <button
+            onClick={() => setIsDirectoryOpen(true)}
+            className="px-3 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+          >
+            <span>All 50+ Services</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
 
-            <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1">
-              {[
-                { id: 'all', label: 'All Tools' },
-                { id: 'id-cards', label: 'ID Cards & Badges' },
-                { id: 'photos', label: 'Passport Studio' },
-                { id: 'govt-forms', label: 'Govt Exam Resizer' },
-                { id: 'enhancement', label: 'Sign & Stamp Cleaner' },
-              ].map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                    selectedCategory === cat.id
-                      ? 'bg-neutral-800 text-cyan-400 border border-neutral-700 shadow-sm'
-                      : 'text-neutral-400 hover:text-neutral-200'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* ---------------------------------------------------- */}
+      {/* 2. COMPACT SEARCH & CATEGORY BAR                     */}
+      {/* ---------------------------------------------------- */}
+      <section className="no-print max-w-7xl mx-auto w-full px-4 sm:px-6 pt-5 pb-3 flex flex-col md:flex-row items-center justify-between gap-3">
+        {/* Search Bar */}
+        <div className="relative w-full md:w-80">
+          <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search tools (Aadhaar, Epson, Invoice, Resizer)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500 transition-colors shadow-inner"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white text-xs"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* Category Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto text-xs pb-1 scrollbar-none">
+          {[
+            { id: 'all', label: `All Tools (${ALL_VISUAL_SERVICES.length})` },
+            { id: 'favorites', label: `★ Favorites (${favorites.length})` },
+            { id: 'id-cards', label: 'PAN & Voter / ID' },
+            { id: 'photos', label: 'Passport & Photos' },
+            { id: 'govt-forms', label: 'Govt Form Resizers' },
+            { id: 'enhancement', label: 'AI Enhancement' },
+            { id: 'utilities', label: 'Daily Shop Utilities' },
+          ].map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setSelectedCategory(cat.id)}
+              className={`px-3 py-1.5 rounded-xl font-semibold whitespace-nowrap transition-colors cursor-pointer text-xs ${
+                selectedCategory === cat.id
+                  ? 'bg-cyan-500 text-neutral-950 font-bold shadow-sm'
+                  : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
         </div>
       </section>
 
       {/* ---------------------------------------------------- */}
-      {/* TOOLS GRID                                           */}
+      {/* 3. VISUAL SERVICES GRID (MATCHES REFERENCE IMAGE 4)  */}
       {/* ---------------------------------------------------- */}
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredTools.map((tool) => {
-            const Icon = tool.icon;
-            return (
-              <div
-                key={tool.id}
-                onClick={() => onSelectTool(tool.id)}
-                className="group relative bg-neutral-900/50 hover:bg-neutral-900 border border-neutral-800 hover:border-neutral-700 rounded-2xl p-5 flex flex-col justify-between transition-all duration-200 hover:shadow-2xl hover:shadow-cyan-500/5 cursor-pointer"
-              >
-                <div>
-                  {/* Card Header */}
-                  <div className="flex items-center justify-between mb-3.5">
-                    <div className="w-10 h-10 rounded-xl bg-neutral-800/80 border border-neutral-700/80 flex items-center justify-center text-cyan-400 group-hover:scale-105 group-hover:border-cyan-500/40 transition-all">
-                      <Icon className="w-5 h-5" />
+      <main className="no-print max-w-7xl mx-auto w-full px-4 sm:px-6 pb-12 flex-1">
+        {filteredTools.length === 0 ? (
+          <div className="p-12 text-center text-neutral-500 flex flex-col items-center justify-center gap-2">
+            <span className="text-2xl">🔍</span>
+            <span className="text-sm font-semibold text-neutral-400">No matching services found</span>
+            <button
+              onClick={() => {
+                setSelectedCategory('all');
+                setSearchQuery('');
+              }}
+              className="text-xs text-cyan-400 underline cursor-pointer mt-1"
+            >
+              Reset filters & search
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+            {filteredTools.map((tool) => {
+              const isFav = favorites.includes(tool.id);
+
+              return (
+                <div
+                  key={tool.id}
+                  onClick={() => onSelectTool(tool.toolId)}
+                  className="bg-neutral-900/70 hover:bg-neutral-900 border border-neutral-800 hover:border-cyan-500/60 rounded-2xl p-3.5 flex flex-col justify-between transition-all group shadow-md hover:shadow-xl hover:shadow-cyan-500/10 cursor-pointer relative"
+                >
+                  <div>
+                    {/* Top Action Bar: Heart (Favorite) & Badge */}
+                    <div className="flex items-center justify-between mb-2">
+                      <button
+                        onClick={(e) => toggleFavorite(e, tool.id)}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
+                          isFav
+                            ? 'bg-rose-500/20 text-rose-400'
+                            : 'bg-neutral-800/60 text-neutral-500 hover:text-rose-400'
+                        }`}
+                        title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-rose-500 text-rose-500' : ''}`} />
+                      </button>
+
+                      <span
+                        className={`text-[9px] px-2 py-0.5 rounded font-mono font-bold border ${tool.badgeColor}`}
+                      >
+                        {tool.badge}
+                      </span>
                     </div>
 
-                    <span
-                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${tool.badgeColor}`}
-                    >
-                      {tool.badge}
-                    </span>
+                    {/* High-Fidelity Visual Photo / Thumbnail */}
+                    <ServiceThumbnail type={tool.thumbnailType} className="w-full h-28 sm:h-32 mb-3" />
+
+                    {/* Tool Title */}
+                    <h3 className="font-bold text-xs sm:text-sm text-white group-hover:text-cyan-300 transition-colors line-clamp-1">
+                      {tool.title}
+                    </h3>
+
+                    {/* Tool Short Description */}
+                    <p className="text-[11px] text-neutral-400 mt-1 line-clamp-2 leading-relaxed">
+                      {tool.description}
+                    </p>
                   </div>
 
-                  <h3 className="font-bold text-base text-white group-hover:text-cyan-300 transition-colors">
-                    {tool.title}
-                  </h3>
-                  <p className="text-xs text-neutral-400 mt-1.5 leading-relaxed line-clamp-2">
-                    {tool.description}
-                  </p>
-                </div>
-
-                <div className="mt-5 pt-4 border-t border-neutral-800/80 flex flex-col gap-3">
-                  {/* Feature Tags */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {tool.features.map((feat, idx) => (
-                      <span
-                        key={idx}
-                        className="text-[10px] bg-neutral-950 px-2 py-0.5 rounded text-neutral-400 font-mono border border-neutral-800"
-                      >
-                        {feat}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Launch Link */}
-                  <div className="flex items-center justify-between text-xs font-semibold text-cyan-400 group-hover:text-cyan-300 pt-1">
-                    <span>Launch Utility</span>
-                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  {/* Launch Footer */}
+                  <div className="mt-4 pt-2.5 border-t border-neutral-800/80 flex items-center justify-between text-xs text-cyan-400 font-semibold group-hover:translate-x-0.5 transition-transform">
+                    <span>Open Service</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        )}
+
+        {/* Directory Banner Callout */}
+        <div className="mt-8 bg-gradient-to-r from-neutral-900 via-neutral-900 to-blue-950/40 border border-neutral-800 rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-base font-bold text-white">Looking for other CSC or Govt Portals?</h3>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Access over 50+ one-click tools including Ayushman, e-Shram, ABHA, Daily Ledger, Ration Splitter, and Govt Portals.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setIsDirectoryOpen(true)}
+            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer shadow-md shadow-cyan-500/20"
+          >
+            <span>Open All 50+ Directory</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
         </div>
       </main>
 
       {/* ---------------------------------------------------- */}
-      {/* FOOTER BAR                                           */}
+      {/* 4. ALL SERVICES DIRECTORY MODAL                      */}
       {/* ---------------------------------------------------- */}
-      <footer className="border-t border-neutral-800 bg-neutral-900/40 px-6 py-4 text-xs text-neutral-500 flex flex-col sm:flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-neutral-400">NP Job Portal & Print Hub</span>
-          <span>·</span>
-          <span>True 300 DPI Computer Vision Canvas Suite</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="font-mono text-[11px] text-neutral-400">ISO CR80 & ISO A4 Calibrated</span>
-          {onOpenAdminPortal && currentUser?.role === 'admin' && (
-            <button
-              onClick={onOpenAdminPortal}
-              className="text-amber-400 hover:text-amber-300 font-medium cursor-pointer"
-            >
-              Admin Portal
-            </button>
-          )}
-        </div>
-      </footer>
+      <AllServicesDirectoryModal
+        isOpen={isDirectoryOpen}
+        onClose={() => setIsDirectoryOpen(false)}
+        onSelectTool={(toolId) => onSelectTool(toolId)}
+        onOpenPricing={onOpenPricing}
+      />
     </div>
   );
 }
