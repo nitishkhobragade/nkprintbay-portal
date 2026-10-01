@@ -65,6 +65,7 @@ import {
   Quadrilateral,
   NormalizedRect
 } from '../../lib/canvasUtils';
+import { SessionUser } from '../../lib/authStore';
 
 const PX_PER_MM = 300 / 25.4; // 11.8110236
 
@@ -72,7 +73,12 @@ export type ProcessorMode = 'cropper' | 'vector-template';
 export type VectorTemplateType = 'aadhaar' | 'pan' | 'voter';
 export type PrintPaperType = 'a4-fold' | '4x6-glossy' | 'epson-tray';
 
-export default function SmartIdProcessor() {
+export interface SmartIdProcessorProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
+
+export default function SmartIdProcessor({ currentUser, onRequireAuth }: SmartIdProcessorProps = {}) {
   const [activeMode, setActiveMode] = useState<ProcessorMode>('cropper');
 
   // Print paper layout
@@ -862,7 +868,20 @@ export default function SmartIdProcessor() {
   // ----------------------------------------------------
   // 7. DIRECT 1-CLICK PRINT & DOWNLOAD ACTIONS
   // ----------------------------------------------------
+  const checkAuthForExport = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print / Download ID Cards. Sign in or register to get 4 Free Prints!' }
+      }));
+      return false;
+    }
+    return true;
+  };
+
   const handlePrint = () => {
+    if (!checkAuthForExport()) return;
+
     const sheetCanvas = masterSheetCanvasRef.current;
     if (!sheetCanvas) return;
 
@@ -912,6 +931,8 @@ export default function SmartIdProcessor() {
   };
 
   const handleDownloadSheet = () => {
+    if (!checkAuthForExport()) return;
+
     const sheetCanvas = masterSheetCanvasRef.current;
     if (!sheetCanvas) return;
     const a = document.createElement('a');
@@ -1149,13 +1170,35 @@ export default function SmartIdProcessor() {
           </div>
         </div>
 
+        {/* Guest Export Warning / Login CTA */}
+        {!currentUser && (
+          <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex flex-col gap-1.5">
+            <div className="flex items-center gap-1.5 font-bold">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Login Required to Print & Export</span>
+            </div>
+            <p className="text-[11px] text-neutral-400">
+              Only Image Compressor & PDF Suite are free without login. Sign up now to get 4 Free HD Prints!
+            </p>
+            <button
+              onClick={() => {
+                onRequireAuth?.();
+                window.dispatchEvent(new Event('np_trigger_login'));
+              }}
+              className="mt-0.5 py-1 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs"
+            >
+              Sign In to Print
+            </button>
+          </div>
+        )}
+
         {/* Action Buttons: Direct Print & Downloads */}
         <div className="space-y-2 pt-2 border-t border-neutral-800">
           <button
             onClick={handlePrint}
             className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-neutral-950 font-black rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer transition-all"
           >
-            <PrinterIcon className="w-4 h-4" />
+            {!currentUser ? <Lock className="w-4 h-4 text-slate-950" /> : <PrinterIcon className="w-4 h-4" />}
             <span>Direct 1:1 Scale Print (No Margins)</span>
           </button>
 
@@ -1163,7 +1206,7 @@ export default function SmartIdProcessor() {
             onClick={handleDownloadSheet}
             className="w-full py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
           >
-            <Download className="w-3.5 h-3.5 text-blue-400" />
+            {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-400" /> : <Download className="w-3.5 h-3.5 text-blue-400" />}
             <span>Download Ultra-HD 300 DPI PNG</span>
           </button>
         </div>

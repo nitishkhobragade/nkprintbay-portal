@@ -30,6 +30,12 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { formatDDMMYYYY } from '../../lib/dateUtils';
+import { SessionUser } from '../../lib/authStore';
+
+export interface InvoiceMakerProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
 
 interface InvoiceItem {
   id: string;
@@ -39,7 +45,7 @@ interface InvoiceItem {
   amount: number;
 }
 
-export default function InvoiceMaker() {
+export default function InvoiceMaker({ currentUser, onRequireAuth }: InvoiceMakerProps = {}) {
   // 1. Color & Typography
   const [accentColor, setAccentColor] = useState<string>('#4f46e5'); // Indigo default
   const [fontStyle, setFontStyle] = useState<'modern' | 'bold' | 'serif' | 'royal' | 'cyber' | 'pos'>('modern');
@@ -118,6 +124,13 @@ export default function InvoiceMaker() {
 
   // Actions
   const handlePrint = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print Invoices. Sign in or register to get 4 Free Prints!' }
+      }));
+      return;
+    }
     window.print();
   };
 

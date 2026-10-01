@@ -102,10 +102,16 @@ import {
 } from '../lib/sampleDocuments';
 
 import { formatDDMMYYYY, formatDDMMYYYYWithTime } from '../lib/dateUtils';
+import { SessionUser } from '../lib/authStore';
+
+export interface CardProcessorProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
 
 type InputMode = 'pdf-preset' | 'raw-image';
 
-export default function CardProcessor() {
+export default function CardProcessor({ currentUser, onRequireAuth }: CardProcessorProps = {}) {
   // ----------------------------------------------------
   // ENGINE STATE
   // ----------------------------------------------------
@@ -870,7 +876,20 @@ export default function CardProcessor() {
   // ----------------------------------------------------
   // DOWNLOAD & PRINT ACTIONS
   // ----------------------------------------------------
+  const checkAuthForExport = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print / Download ID Cards. Sign in or register to get 4 Free Prints!' }
+      }));
+      setStatusMessage('🔒 Login required to print or download ID cards. Please sign in or register.');
+      return false;
+    }
+    return true;
+  };
+
   const handleDownloadFront = () => {
+    if (!checkAuthForExport()) return;
     if (!frontCardCanvas) return;
     const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
     downloadCanvasAsPng(frontCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_front_${dateStamp}.png`);
@@ -878,6 +897,7 @@ export default function CardProcessor() {
   };
 
   const handleDownloadBack = () => {
+    if (!checkAuthForExport()) return;
     if (!backCardCanvas) return;
     const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
     downloadCanvasAsPng(backCardCanvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_back_${dateStamp}.png`);
@@ -885,6 +905,7 @@ export default function CardProcessor() {
   };
 
   const handleDownloadA4 = () => {
+    if (!checkAuthForExport()) return;
     if (!assembledA4Canvas) return;
     const dateStamp = formatDDMMYYYY(new Date()).replace(/\//g, '-');
     downloadCanvasAsPng(assembledA4Canvas, `${sourceFileName.replace(/\.[^/.]+$/, '')}_A4_${dateStamp}.png`);
@@ -892,6 +913,7 @@ export default function CardProcessor() {
   };
 
   const handleTriggerPrint = async () => {
+    if (!checkAuthForExport()) return;
     if (!assembledA4Canvas) return;
     setStatusMessage('Initiating 1:1 scale print stream...');
     const res = await executeNativePrint(assembledA4Canvas, selectedPrinterPreset);
@@ -1562,14 +1584,14 @@ export default function CardProcessor() {
                       onClick={handleDownloadA4}
                       className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
-                      <Download className="w-3.5 h-3.5 text-cyan-400" />
+                      {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-400" /> : <Download className="w-3.5 h-3.5 text-cyan-400" />}
                       <span>Download Sheet PNG</span>
                     </button>
                     <button
                       onClick={handleTriggerPrint}
                       className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-neutral-950 font-bold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
-                      <Printer className="w-3.5 h-3.5" />
+                      {!currentUser ? <Lock className="w-3.5 h-3.5 text-slate-950" /> : <Printer className="w-3.5 h-3.5" />}
                       <span>Print 1:1 Scale</span>
                     </button>
                   </div>

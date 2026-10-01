@@ -65,6 +65,7 @@ export interface AdminUserData {
   isSessionActive?: boolean;
   daysRemaining?: number;
   createdAt: string | Date;
+  password?: string;
 }
 
 export interface TransactionItem {

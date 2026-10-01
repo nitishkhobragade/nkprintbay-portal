@@ -30,37 +30,23 @@ export interface SessionUser {
 const STORAGE_USERS_KEY = 'np_admin_users_db';
 const STORAGE_SESSION_KEY = 'np_active_session_data';
 
-// Initial pre-seeded users (Includes Super Admin, Operators, and Master Test User)
+// Initial pre-seeded users (Includes Admin credentials requested by user)
 export const SEED_USERS: AdminUserData[] = [
   {
-    _id: 'usr_master',
-    name: 'Master Test Operator (Cyber Cafe Simulator)',
-    email: 'master@printbay.in',
-    phone: '+91 98200 12345',
-    role: 'master',
-    planStatus: 'active',
-    effectiveStatus: 'active',
-    planName: 'Master Enterprise Simulator',
-    planExpiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
-    currentSessionToken: 'sess_master_token_007',
-    isSessionActive: true,
-    daysRemaining: 180,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    _id: 'usr_admin',
-    name: 'Super Admin',
-    email: 'admin@npportal.com',
+    _id: 'usr_admin_nitish',
+    name: 'Nitish Khobragade (Admin)',
+    email: 'djnitish97@gmail.com',
     phone: '+91 99000 00001',
     role: 'admin',
     planStatus: 'active',
     effectiveStatus: 'active',
     planName: 'Super Admin Lifetime License',
-    planExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-    currentSessionToken: 'sess_admin_master_token',
+    planExpiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(),
+    currentSessionToken: 'sess_admin_master_token_nitish',
     isSessionActive: true,
-    daysRemaining: 365,
+    daysRemaining: 3650,
     createdAt: new Date().toISOString(),
+    password: 'admin@nk',
   },
   {
     _id: 'usr_operator',
@@ -70,12 +56,13 @@ export const SEED_USERS: AdminUserData[] = [
     role: 'user',
     planStatus: 'active',
     effectiveStatus: 'active',
-    planName: 'Starter Free Trial (Valid 7 Days)',
-    planExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    planName: 'Starter Free Trial (Valid 14 Days)',
+    planExpiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
     currentSessionToken: 'sess_operator_device_101',
     isSessionActive: true,
-    daysRemaining: 7,
+    daysRemaining: 14,
     createdAt: new Date().toISOString(),
+    password: 'operator@123',
   },
   {
     _id: 'usr_expired',
@@ -91,21 +78,46 @@ export const SEED_USERS: AdminUserData[] = [
     isSessionActive: false,
     daysRemaining: 0,
     createdAt: new Date().toISOString(),
+    password: 'demo@123',
   }
 ];
 
 export function getStoredUsers(): AdminUserData[] {
   if (typeof window === 'undefined') return SEED_USERS;
   const raw = localStorage.getItem(STORAGE_USERS_KEY);
-  if (!raw) {
-    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(SEED_USERS));
-    return SEED_USERS;
+  let users: AdminUserData[] = SEED_USERS;
+  if (raw) {
+    try {
+      users = JSON.parse(raw);
+    } catch {
+      users = SEED_USERS;
+    }
   }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return SEED_USERS;
+
+  // Ensure Admin user always exists with the requested credentials
+  const adminIdx = users.findIndex(
+    (u) => u.email.toLowerCase() === 'djnitish97@gmail.com'
+  );
+  if (adminIdx === -1) {
+    users.unshift(SEED_USERS[0]);
+    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
+  } else {
+    // Keep password and role up-to-date
+    if (
+      users[adminIdx].password !== 'admin@nk' ||
+      users[adminIdx].role !== 'admin' ||
+      users[adminIdx].planStatus !== 'active'
+    ) {
+      users[adminIdx].password = 'admin@nk';
+      users[adminIdx].role = 'admin';
+      users[adminIdx].planStatus = 'active';
+      users[adminIdx].effectiveStatus = 'active';
+      users[adminIdx].name = 'Nitish Khobragade (Admin)';
+      localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
+    }
   }
+
+  return users;
 }
 
 export function saveStoredUsers(users: AdminUserData[]) {
@@ -119,20 +131,9 @@ export function getStoredSession(): SessionUser | null {
   if (typeof window === 'undefined') return null;
   const raw = localStorage.getItem(STORAGE_SESSION_KEY);
   if (!raw) {
-    // Default to the active operator user on first launch
-    const defaultUser = SEED_USERS[1];
-    const initialSession: SessionUser = {
-      id: defaultUser._id,
-      name: defaultUser.name,
-      email: defaultUser.email,
-      role: defaultUser.role,
-      planStatus: 'active',
-      planExpiresAt: defaultUser.planExpiresAt as string,
-      sessionToken: defaultUser.currentSessionToken || 'sess_operator_device_101',
-      daysRemaining: 14,
-    };
-    localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(initialSession));
-    return initialSession;
+    // Return null when logged out or visiting for the first time!
+    // Do NOT auto-login as Admin!
+    return null;
   }
   try {
     return JSON.parse(raw);

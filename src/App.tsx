@@ -17,6 +17,8 @@ import ShopUtilitySuite from './components/tools/ShopUtilitySuite';
 import MasterBatchCompressor from './components/tools/MasterBatchCompressor';
 import PassportStudio from './components/tools/PassportStudio';
 import SmartIdProcessor from './components/tools/SmartIdProcessor';
+import ImageSizeReducer from './components/tools/ImageSizeReducer';
+import PdfSuiteTools from './components/tools/PdfSuiteTools';
 import DashboardPage, { PortalToolId } from '../app/dashboard/page';
 import AdminPage from '../app/admin/page';
 import PricingPage from '../app/pricing/page';
@@ -54,24 +56,24 @@ export default function App() {
   // ADMIN VIEW
   // ----------------------------------------------------
   if (currentView === 'admin') {
-    if (currentUser && currentUser.role !== 'admin') {
+    if (!currentUser || currentUser.role !== 'admin') {
       return (
         <div className="w-full min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-8 text-center flex flex-col items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
+          <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-8 text-center flex flex-col items-center gap-4 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
               <ShieldAlert className="w-7 h-7" />
             </div>
-            <h2 className="text-xl font-bold">Admin Privileges Required</h2>
-            <p className="text-xs text-neutral-400">
-              Your account (<span className="font-mono text-neutral-200">{currentUser.email}</span>) does not have the{' '}
-              <span className="font-mono text-amber-400">admin</span> role required to access the admin portal.
+            <h2 className="text-xl font-bold">🔒 Super Admin Authentication Required</h2>
+            <p className="text-xs text-neutral-400 leading-relaxed">
+              This management portal is restricted to Super Admin (<span className="text-amber-300 font-mono font-bold">djnitish97@gmail.com</span>).
+              Please sign in to the counter with your admin credentials to access this dashboard.
             </p>
             <button
               onClick={() => setCurrentView('dashboard')}
-              className="mt-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="mt-2 px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-neutral-950 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-md"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Return to Dashboard</span>
+              <span>Return to Main Website</span>
             </button>
           </div>
         </div>
@@ -81,8 +83,8 @@ export default function App() {
     return (
       <AdminPage
         onBackToPortal={() => setCurrentView('dashboard')}
-        currentAdminEmail={currentUser?.email || 'admin@npportal.com'}
-        currentAdminToken={currentUser?.sessionToken || 'admin-active-session-token'}
+        currentAdminEmail={currentUser.email}
+        currentAdminToken={currentUser.sessionToken}
       />
     );
   }
@@ -105,6 +107,7 @@ export default function App() {
 
   // Helper title for breadcrumb
   const toolTitles: Record<PortalToolId, { name: string; icon: React.ComponentType<{ className?: string }> }> = {
+    'image-reducer': { name: 'Reduce Image Size In KB (Pi7 Style)', icon: Maximize2 },
     'card-engine': { name: 'Ultra-HD ID Card Processor', icon: CreditCard },
     'passport-maker': { name: 'Passport & Visa Photo Grid Maker', icon: Camera },
     'passport-studio': { name: '1-Click Passport Photo Studio (300 DPI)', icon: Camera },
@@ -122,6 +125,7 @@ export default function App() {
     'age-calc': { name: 'Age & DOB Eligibility Calculator', icon: Calendar },
     'land-calc': { name: 'Land Area Converter (Katha/Bigha/Satak)', icon: Maximize2 },
     'master-compressor': { name: 'Master Batch Image & PDF Compressor', icon: Archive },
+    'pdf-suite': { name: 'PDF Suite & Converter (A4 PDF, Merge & Split)', icon: FileSpreadsheet },
   };
 
   return (
@@ -177,6 +181,8 @@ export default function App() {
                 onChange={(e) => setCurrentView(e.target.value as AppView)}
                 className="bg-neutral-950 border border-neutral-800 text-neutral-300 text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-cyan-500 font-medium max-w-[130px] sm:max-w-[180px] md:max-w-none truncate"
               >
+                <option value="image-reducer">Image Size Reducer (KB Target - Free)</option>
+                <option value="pdf-suite">PDF Suite & Converter (Free)</option>
                 <option value="card-engine">ID Card Engine (Aadhaar / PAN)</option>
                 <option value="smart-id">Smart ID Processor (Cropper + Vector)</option>
                 <option value="passport-studio">Passport Photo Studio (1-Click)</option>
@@ -206,19 +212,27 @@ export default function App() {
             onSelectTool={(toolId) => setCurrentView(toolId)}
             onOpenAdminPortal={() => setCurrentView('admin')}
             onOpenPricing={() => setCurrentView('pricing')}
+            onOpenSignIn={() => window.dispatchEvent(new Event('np_trigger_login'))}
+            onOpenRegister={() => window.dispatchEvent(new Event('np_trigger_register'))}
           />
         )}
 
-        {currentView === 'card-engine' && <CardProcessor />}
-        {currentView === 'smart-id' && <SmartIdProcessor />}
-        {currentView === 'passport-studio' && <PassportStudio />}
+        {currentView === 'image-reducer' && (
+          <ImageSizeReducer onNavigateTool={(id) => setCurrentView(id as any)} />
+        )}
+        {currentView === 'pdf-suite' && (
+          <PdfSuiteTools />
+        )}
+        {currentView === 'card-engine' && <CardProcessor currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
+        {currentView === 'smart-id' && <SmartIdProcessor currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
+        {currentView === 'passport-studio' && <PassportStudio currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
         {currentView === 'ai-upscaler' && <AiVisionUpscaler />}
-        {currentView === 'invoice-maker' && <InvoiceMaker />}
-        {currentView === 'passport-maker' && <PassportPhotoMaker />}
-        {currentView === 'multi-card' && <MultiCardSheet />}
+        {currentView === 'invoice-maker' && <InvoiceMaker currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
+        {currentView === 'passport-maker' && <PassportPhotoMaker currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
+        {currentView === 'multi-card' && <MultiCardSheet currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
         {currentView === 'govt-resizer' && <GovtResizer />}
         {currentView === 'cash-counter' && <CashCounter />}
-        {currentView === 'thermal-slip' && <ThermalSlipMaker />}
+        {currentView === 'thermal-slip' && <ThermalSlipMaker currentUser={currentUser} onRequireAuth={() => window.dispatchEvent(new Event('np_trigger_login'))} />}
         {currentView === 'signature-enhancer' && <SignatureEnhancer />}
         {currentView === 'master-compressor' && <MasterBatchCompressor />}
         {(currentView === 'payment-standee' ||

@@ -21,7 +21,8 @@ import {
   Sliders,
   Scissors,
   Eye,
-  FileText
+  FileText,
+  Lock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -33,6 +34,12 @@ import {
   triggerPrintA4
 } from '../../lib/canvasUtils';
 import { executeNativePrint } from '../../lib/nativePrint';
+import { SessionUser } from '../../lib/authStore';
+
+export interface MultiCardSheetProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
 
 export interface CardSlotItem {
   id: string;
@@ -43,7 +50,7 @@ export interface CardSlotItem {
   backDataUrl: string | null;
 }
 
-export default function MultiCardSheet() {
+export default function MultiCardSheet({ currentUser, onRequireAuth }: MultiCardSheetProps = {}) {
   const [cards, setCards] = useState<CardSlotItem[]>([]);
   const [showCuttingMarks, setShowCuttingMarks] = useState<boolean>(true);
   const [cardBorderStyle, setCardBorderStyle] = useState<'solid' | 'dashed' | 'none'>('solid');
@@ -367,7 +374,19 @@ export default function MultiCardSheet() {
   // ----------------------------------------------------
   // PRINT & DOWNLOAD
   // ----------------------------------------------------
+  const checkAuthForExport = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print / Download Batch Sheets. Sign in or register to get 4 Free Prints!' }
+      }));
+      return false;
+    }
+    return true;
+  };
+
   const handleDownloadSheet = () => {
+    if (!checkAuthForExport()) return;
     const canvas = a4CanvasRef.current;
     if (!canvas) return;
     downloadCanvasAsPng(canvas, `multi-card-batch-${cards.length}-cards-300dpi.png`);
@@ -375,6 +394,7 @@ export default function MultiCardSheet() {
   };
 
   const handlePrint = async () => {
+    if (!checkAuthForExport()) return;
     const canvas = a4CanvasRef.current;
     if (!canvas) return;
     await executeNativePrint(canvas, 'standard-a4-borderless');

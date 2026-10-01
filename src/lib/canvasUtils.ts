@@ -7,6 +7,10 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+import { detectAccurateCardCorners, detectFaceAndHeadBiometric, FaceBiometricResult } from './cvDetection';
+
+export { detectAccurateCardCorners, detectFaceAndHeadBiometric };
+export type { FaceBiometricResult };
 
 // Configure PDF.js worker
 if (typeof window !== 'undefined') {
@@ -242,150 +246,15 @@ export function rotateCanvas(
 
 /**
  * Automatically detects the card boundary in a raw mobile photo or scan.
- * Uses adaptive luminance thresholding and edge corner analysis.
+ * Uses high-accuracy multi-stage bilateral edge gradient, aspect ratio scoring (~1.586 CR80),
+ * and local sub-pixel corner refinement.
  * Returns the 4 corner points [TL, TR, BR, BL] scaled to the original image dimensions.
  */
 export function detectCardCorners(
   sourceCanvas: HTMLCanvasElement | HTMLImageElement,
   aspectRatioTarget = CR80_ASPECT_RATIO
 ): Quadrilateral {
-  const origW = 'width' in sourceCanvas ? sourceCanvas.width : (sourceCanvas as HTMLImageElement).naturalWidth;
-  const origH = 'height' in sourceCanvas ? sourceCanvas.height : (sourceCanvas as HTMLImageElement).naturalHeight;
-
-  // Process on a downscaled working canvas for fast computer vision operations
-  const MAX_PROC_DIM = 640;
-  const scaleDown = Math.min(1.0, MAX_PROC_DIM / Math.max(origW, origH));
-  const procW = Math.max(100, Math.round(origW * scaleDown));
-  const procH = Math.max(100, Math.round(origH * scaleDown));
-
-  const cvCanvas = document.createElement('canvas');
-  cvCanvas.width = procW;
-  cvCanvas.height = procH;
-  const cvCtx = cvCanvas.getContext('2d', { willReadFrequently: true });
-  if (!cvCtx) {
-    return getDefaultQuad(origW, origH);
-  }
-
-  cvCtx.drawImage(sourceCanvas, 0, 0, procW, procH);
-  const imgData = cvCtx.getImageData(0, 0, procW, procH);
-  const data = imgData.data;
-
-  // 1. Grayscale & Luminance Buffer
-  const gray = new Float32Array(procW * procH);
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    gray[j] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-  }
-
-  // 2. Compute Sobel Edge Gradients
-  const edges = new Float32Array(procW * procH);
-  let maxEdge = 0;
-  for (let y = 1; y < procH - 1; y++) {
-    for (let x = 1; x < procW - 1; x++) {
-      const idx = y * procW + x;
-      // Horizontal gradient
-      const gx =
-        -gray[idx - procW - 1] + gray[idx - procW + 1] -
-        2 * gray[idx - 1] + 2 * gray[idx + 1] -
-        gray[idx + procW - 1] + gray[idx + procW + 1];
-      // Vertical gradient
-      const gy =
-        -gray[idx - procW - 1] - 2 * gray[idx - procW] - gray[idx - procW + 1] +
-        gray[idx + procW - 1] + 2 * gray[idx + procW] + gray[idx + procW + 1];
-
-      const mag = Math.hypot(gx, gy);
-      edges[idx] = mag;
-      if (mag > maxEdge) maxEdge = mag;
-    }
-  }
-
-  // 3. Adaptive Thresholding to extract candidate card edge points
-  const edgeThreshold = Math.max(25, maxEdge * 0.22);
-  const edgePoints: Point2D[] = [];
-
-  // Exclude immediate image borders (outer 4%) to prevent picking up frame boundaries
-  const borderMarginX = Math.round(procW * 0.04);
-  const borderMarginY = Math.round(procH * 0.04);
-
-  for (let y = borderMarginY; y < procH - borderMarginY; y += 2) {
-    for (let x = borderMarginX; x < procW - borderMarginX; x += 2) {
-      const idx = y * procW + x;
-      if (edges[idx] > edgeThreshold) {
-        edgePoints.push({ x, y });
-      }
-    }
-  }
-
-  // If insufficient edge points were found, fallback to centered standard card
-  if (edgePoints.length < 80) {
-    return getDefaultQuad(origW, origH);
-  }
-
-  // 4. Find Extreme Quadrilateral Corners
-  // Top-Left: minimizes (x + y)
-  // Top-Right: maximizes (x - y)
-  // Bottom-Right: maximizes (x + y)
-  // Bottom-Left: minimizes (x - y)
-  let tl = edgePoints[0];
-  let tr = edgePoints[0];
-  let br = edgePoints[0];
-  let bl = edgePoints[0];
-
-  let minSum = tl.x + tl.y;
-  let maxSum = br.x + br.y;
-  let maxDiff = tr.x - tr.y;
-  let minDiff = bl.x - bl.y;
-
-  for (let i = 1; i < edgePoints.length; i++) {
-    const pt = edgePoints[i];
-    const sum = pt.x + pt.y;
-    const diff = pt.x - pt.y;
-
-    if (sum < minSum) {
-      minSum = sum;
-      tl = pt;
-    }
-    if (sum > maxSum) {
-      maxSum = sum;
-      br = pt;
-    }
-    if (diff > maxDiff) {
-      maxDiff = diff;
-      tr = pt;
-    }
-    if (diff < minDiff) {
-      minDiff = diff;
-      bl = pt;
-    }
-  }
-
-  // Validate geometry: Check if detected quad has reasonable area & aspect ratio
-  const widthTop = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-  const widthBottom = Math.hypot(br.x - bl.x, br.y - bl.y);
-  const heightLeft = Math.hypot(bl.x - tl.x, bl.y - tl.y);
-  const heightRight = Math.hypot(br.x - tr.x, br.y - tr.y);
-
-  const avgWidth = (widthTop + widthBottom) / 2;
-  const avgHeight = (heightLeft + heightRight) / 2;
-  const detectedAspect = avgWidth / Math.max(1, avgHeight);
-
-  // If detected aspect is wildly off (less than 1.1 or greater than 2.3) or too small, use default
-  if (
-    avgWidth < procW * 0.25 ||
-    avgHeight < procH * 0.2 ||
-    detectedAspect < 1.1 ||
-    detectedAspect > 2.3
-  ) {
-    return getDefaultQuad(origW, origH);
-  }
-
-  // Scale back up to original image dimensions
-  const invScale = 1.0 / scaleDown;
-  return [
-    { x: Math.round(tl.x * invScale), y: Math.round(tl.y * invScale) },
-    { x: Math.round(tr.x * invScale), y: Math.round(tr.y * invScale) },
-    { x: Math.round(br.x * invScale), y: Math.round(br.y * invScale) },
-    { x: Math.round(bl.x * invScale), y: Math.round(bl.y * invScale) },
-  ];
+  return detectAccurateCardCorners(sourceCanvas, aspectRatioTarget);
 }
 
 /**

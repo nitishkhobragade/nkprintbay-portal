@@ -44,10 +44,17 @@ import {
   Contrast,
   User,
   ShieldCheck,
-  Check
+  Check,
+  Lock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { downloadCanvasAsPng, triggerPrintA4, Point2D, Quadrilateral, warpQuadrilateralToCard } from '../../lib/canvasUtils';
+import { SessionUser } from '../../lib/authStore';
+
+export interface PassportPhotoMakerProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
 
 export type PaperFormat = '4x6' | 'a4' | 'single';
 export type PassportStandard = 'in-standard' | 'us-visa' | 'stamp-size';
@@ -84,7 +91,7 @@ const PASSPORT_SIZES: Record<PassportStandard, { name: string; widthMm: number; 
   'stamp-size': { name: 'Stamp Size (25 × 30 mm)', widthMm: 25, heightMm: 30 },
 };
 
-export default function PassportPhotoMaker() {
+export default function PassportPhotoMaker({ currentUser, onRequireAuth }: PassportPhotoMakerProps = {}) {
   const [paperFormat, setPaperFormat] = useState<PaperFormat>('4x6');
   const [passportStandard, setPassportStandard] = useState<PassportStandard>('in-standard');
   const [photoCount, setPhotoCount] = useState<number>(8); // 1, 6, 8, 12, 16, 32
@@ -459,8 +466,20 @@ export default function PassportPhotoMaker() {
   // ---------------------------------------------------------------------------
   // 4 HIGH-DEFINITION EXPORT OPTIONS
   // ---------------------------------------------------------------------------
+  const checkAuthForExport = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print / Download Photo Sheets. Sign in or register to get 4 Free Prints!' }
+      }));
+      return false;
+    }
+    return true;
+  };
+
   // Option 1: Ultra HD 300 DPI PNG
   const handleDownloadPngUltraHd = () => {
+    if (!checkAuthForExport()) return;
     const canvas = outputCanvasRef.current;
     if (!canvas) return;
     downloadCanvasAsPng(canvas, `passport_ultra_hd_300dpi_${photoCount}copies.png`);
@@ -469,6 +488,7 @@ export default function PassportPhotoMaker() {
 
   // Option 2: 100% Quality Print JPEG
   const handleDownloadJpegPrint = () => {
+    if (!checkAuthForExport()) return;
     const canvas = outputCanvasRef.current;
     if (!canvas) return;
     const url = canvas.toDataURL('image/jpeg', 1.0);
@@ -483,6 +503,7 @@ export default function PassportPhotoMaker() {
 
   // Option 3: Compressed JPEG (<50 KB for Online Forms)
   const handleDownloadCompressedJpeg = async () => {
+    if (!checkAuthForExport()) return;
     const single = renderSinglePassportUnit();
     // Binary search quality to hit ~35-45 KB
     let q = 0.85;
@@ -504,6 +525,7 @@ export default function PassportPhotoMaker() {
 
   // Option 4: Direct 1:1 Scale Print Stream
   const handlePrintDirect = () => {
+    if (!checkAuthForExport()) return;
     const canvas = outputCanvasRef.current;
     if (!canvas) return;
     triggerPrintA4(canvas);

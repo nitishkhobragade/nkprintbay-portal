@@ -16,11 +16,18 @@ import {
   RotateCcw,
   CheckCircle2,
   Calendar,
-  Building
+  Building,
+  Lock
 } from 'lucide-react';
 import { formatDDMMYYYY, formatDDMMYYYYWithTime } from '../../lib/dateUtils';
+import { SessionUser } from '../../lib/authStore';
 
-export default function ThermalSlipMaker() {
+export interface ThermalSlipMakerProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
+
+export default function ThermalSlipMaker({ currentUser, onRequireAuth }: ThermalSlipMakerProps = {}) {
   const [shopName, setShopName] = useState<string>('TechVeda CSC & Banking Point');
   const [bcAgentName, setBcAgentName] = useState<string>('Rajesh Sharma (CSP ID: 94821)');
   const [bankName, setBankName] = useState<string>('State Bank of India (SBI)');
@@ -32,6 +39,13 @@ export default function ThermalSlipMaker() {
   const [slipWidth, setSlipWidth] = useState<'2-inch' | '3-inch'>('3-inch');
 
   const handlePrint = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print Thermal Slips. Sign in or register to get 4 Free Prints!' }
+      }));
+      return;
+    }
     window.print();
   };
 

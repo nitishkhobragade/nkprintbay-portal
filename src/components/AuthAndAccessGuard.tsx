@@ -29,7 +29,10 @@ import {
   Eye,
   EyeOff,
   Gift,
-  Coins
+  Coins,
+  LogIn,
+  Mail,
+  Key
 } from 'lucide-react';
 import {
   SessionUser,
@@ -40,6 +43,8 @@ import {
   SEED_USERS
 } from '../lib/authStore';
 import MasterTestingHUD from './MasterTestingHUD';
+import Header from './Header';
+import Footer from './Footer';
 import { formatDDMMYYYY } from '../lib/dateUtils';
 
 interface AuthAndAccessGuardProps {
@@ -60,11 +65,11 @@ export default function AuthAndAccessGuard({
   const [isAccountSuspended, setIsAccountSuspended] = useState<boolean>(false);
   const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [showSwitchUserModal, setShowSwitchUserModal] = useState<boolean>(false);
-  const [showMasterHUD, setShowMasterHUD] = useState<boolean>(true);
+  const [showMasterHUD, setShowMasterHUD] = useState<boolean>(false);
 
-  // Registration Modal State & Real-Time Duplicate Validation
+  // Authentication & Registration Modal State
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
-  const [authModalTab, setAuthModalTab] = useState<'login' | 'register'>('register');
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register'>('login');
   const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [regName, setRegName] = useState<string>('');
@@ -73,6 +78,12 @@ export default function AuthAndAccessGuard({
   const [regPassword, setRegPassword] = useState<string>('');
   const [regDuplicateError, setRegDuplicateError] = useState<string | null>(null);
   const [isSubmittingReg, setIsSubmittingReg] = useState<boolean>(false);
+
+  // Sign In Credentials State
+  const [loginEmail, setLoginEmail] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState<boolean>(false);
 
   const checkDuplicate = async (email: string, phone: string) => {
     if (!email.trim() && !phone.replace('+91', '').trim()) {
@@ -183,13 +194,136 @@ export default function AuthAndAccessGuard({
     }
   };
 
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    const email = loginEmail.trim().toLowerCase();
+    const pwd = loginPassword.trim();
+
+    if (!email || !pwd) {
+      setLoginError('Please enter both Email and Password.');
+      return;
+    }
+
+    setIsSubmittingLogin(true);
+
+    try {
+      // 1. Check Admin Credentials: djnitish97@gmail.com / admin@nk
+      if (email === 'djnitish97@gmail.com' && pwd === 'admin@nk') {
+        const users = getStoredUsers();
+        let adminUser = users.find((u) => u.email.toLowerCase() === 'djnitish97@gmail.com');
+        if (!adminUser) {
+          adminUser = {
+            _id: 'usr_admin_nitish',
+            name: 'Nitish Khobragade (Admin)',
+            email: 'djnitish97@gmail.com',
+            phone: '+91 99000 00001',
+            role: 'admin',
+            planStatus: 'active',
+            effectiveStatus: 'active',
+            planName: 'Super Admin Lifetime License',
+            planExpiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(),
+            currentSessionToken: `sess_admin_${Date.now()}`,
+            isSessionActive: true,
+            daysRemaining: 3650,
+            createdAt: new Date().toISOString(),
+            password: 'admin@nk',
+          };
+          saveStoredUsers([adminUser, ...users]);
+        }
+
+        const newSessionToken = `sess_admin_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const updatedUsers = users.map((u) => {
+          if (u.email.toLowerCase() === 'djnitish97@gmail.com') {
+            return { ...u, currentSessionToken: newSessionToken, isSessionActive: true };
+          }
+          return u;
+        });
+        saveStoredUsers(updatedUsers);
+
+        const session: SessionUser = {
+          id: adminUser._id,
+          name: adminUser.name,
+          email: adminUser.email,
+          phone: adminUser.phone,
+          role: 'admin',
+          planStatus: 'active',
+          planExpiresAt: adminUser.planExpiresAt as string,
+          sessionToken: newSessionToken,
+          daysRemaining: 3650,
+        };
+
+        saveStoredSession(session);
+        setCurrentUser(session);
+        setShowRegisterModal(false);
+        setLoginEmail('');
+        setLoginPassword('');
+        setIsSessionConflict(false);
+        onSessionStateChange?.(session);
+        return;
+      }
+
+      // 2. Check Other Registered Operators
+      const users = getStoredUsers();
+      const foundUser = users.find((u) => u.email.toLowerCase() === email);
+
+      if (!foundUser) {
+        setLoginError('No operator account found with this email. Please register or check spelling.');
+        return;
+      }
+
+      if (foundUser.password && foundUser.password !== pwd) {
+        setLoginError('Incorrect password. Please try again.');
+        return;
+      }
+
+      // Success login for user
+      const newSessionToken = `sess_user_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const updatedUsers = users.map((u) => {
+        if (u.email.toLowerCase() === email) {
+          return { ...u, currentSessionToken: newSessionToken, isSessionActive: true };
+        }
+        return u;
+      });
+      saveStoredUsers(updatedUsers);
+
+      const now = new Date();
+      const expiry = new Date(foundUser.planExpiresAt);
+      const isExpired = now > expiry;
+      const days = Math.max(0, Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+
+      const session: SessionUser = {
+        id: foundUser._id,
+        name: foundUser.name,
+        email: foundUser.email,
+        phone: foundUser.phone,
+        role: foundUser.role,
+        planStatus: isExpired ? 'expired' : foundUser.planStatus,
+        planExpiresAt: foundUser.planExpiresAt as string,
+        sessionToken: newSessionToken,
+        daysRemaining: days,
+        freePrintsLeft: (foundUser as any).freePrintsLeft ?? 4,
+      };
+
+      saveStoredSession(session);
+      setCurrentUser(session);
+      setShowRegisterModal(false);
+      setLoginEmail('');
+      setLoginPassword('');
+      setIsSessionConflict(false);
+      onSessionStateChange?.(session);
+    } finally {
+      setIsSubmittingLogin(false);
+    }
+  };
+
   // Sync state and validate session
   const validateSession = () => {
     const session = getStoredSession();
     setCurrentUser(session);
     onSessionStateChange?.(session);
 
-    if (!session) {
+    if (!session || !session.sessionToken) {
       setIsSessionConflict(false);
       setIsAccountSuspended(false);
       setIsPlanExpired(false);
@@ -201,16 +335,15 @@ export default function AuthAndAccessGuard({
 
     if (!dbUser) {
       // User deleted
-      setIsSessionConflict(true);
+      setIsSessionConflict(false);
       return;
     }
 
     // ----------------------------------------------------
     // CHECK 1: SINGLE-DEVICE SESSION CONFLICT
-    // If db token doesn't match client's sessionToken,
-    // another login occurred on another device or admin reset it!
+    // Only trigger modal when an explicit conflicting token exists in DB from another device
     // ----------------------------------------------------
-    if (!dbUser.currentSessionToken || dbUser.currentSessionToken !== session.sessionToken) {
+    if (dbUser.currentSessionToken && session.sessionToken && dbUser.currentSessionToken !== session.sessionToken) {
       setIsSessionConflict(true);
       return;
     } else {
@@ -249,6 +382,20 @@ export default function AuthAndAccessGuard({
     window.addEventListener('np_users_updated', handleStorageChange);
     window.addEventListener('np_session_updated', handleStorageChange);
 
+    const handleTriggerLogin = () => {
+      setAuthModalTab('login');
+      setLoginError(null);
+      setShowRegisterModal(true);
+    };
+    const handleTriggerRegister = () => {
+      setAuthModalTab('register');
+      setRegDuplicateError(null);
+      setShowRegisterModal(true);
+    };
+
+    window.addEventListener('np_trigger_login', handleTriggerLogin);
+    window.addEventListener('np_trigger_register', handleTriggerRegister);
+
     // Heartbeat check every 2 seconds
     const interval = setInterval(validateSession, 2000);
 
@@ -256,6 +403,8 @@ export default function AuthAndAccessGuard({
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('np_users_updated', handleStorageChange);
       window.removeEventListener('np_session_updated', handleStorageChange);
+      window.removeEventListener('np_trigger_login', handleTriggerLogin);
+      window.removeEventListener('np_trigger_register', handleTriggerRegister);
       clearInterval(interval);
     };
   }, []);
@@ -331,21 +480,34 @@ export default function AuthAndAccessGuard({
     validateSession();
   };
 
-  const handleLogout = () => {
-    if (currentUser) {
-      // Clear token from DB
-      const users = getStoredUsers();
-      const updated = users.map((u) => {
-        if (u.email === currentUser.email) {
-          return { ...u, currentSessionToken: null, isSessionActive: false };
-        }
-        return u;
-      });
-      saveStoredUsers(updated);
+  const handleHardLogout = () => {
+    try {
+      if (currentUser) {
+        const users = getStoredUsers();
+        const updated = users.map((u) => {
+          if (u.email === currentUser.email) {
+            return { ...u, currentSessionToken: null, isSessionActive: false };
+          }
+          return u;
+        });
+        saveStoredUsers(updated);
+      }
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user_session');
+      localStorage.removeItem('master_mock_role');
+      localStorage.removeItem('np_printbay_user_session_v2');
+      sessionStorage.clear();
+    } catch (e) {
+      console.warn('Storage purge error:', e);
     }
     saveStoredSession(null);
     setCurrentUser(null);
     setIsSessionConflict(false);
+    window.location.href = '/';
+  };
+
+  const handleLogout = () => {
+    handleHardLogout();
   };
 
   // Quick 1-click renewal from expired overlay (for testing/admin convenience)
@@ -372,112 +534,26 @@ export default function AuthAndAccessGuard({
   return (
     <div className="relative w-full min-h-screen flex flex-col">
       {/* ---------------------------------------------------- */}
-      {/* TOP USER & AUTH STATUS BANNER (Inside Header)         */}
+      {/* GLOBAL HEADER (MATCHING NTECHBAY-LIBRARY)            */}
       {/* ---------------------------------------------------- */}
-      <div className="no-print bg-neutral-900/95 border-b border-neutral-800 px-3 sm:px-6 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-2 text-xs w-full overflow-hidden">
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-            <span className="text-neutral-400 hidden xs:inline shrink-0">Signed In:</span>
-            <span className="font-semibold text-white truncate max-w-[120px] sm:max-w-[180px]">{currentUser?.name || 'Guest'}</span>
-            <span className="text-[10px] text-neutral-500 font-mono hidden xl:inline truncate max-w-[160px]">({currentUser?.email})</span>
-          </div>
-
-          <span className="text-neutral-700 hidden sm:inline">|</span>
-
-          {/* Role Badge */}
-          <span
-            className={`px-1.5 sm:px-2 py-0.5 rounded text-[10px] font-mono font-medium shrink-0 ${
-              currentUser?.role === 'admin'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : 'bg-neutral-800 text-neutral-300'
-            }`}
-          >
-            {currentUser?.role?.toUpperCase() || 'USER'}
-          </span>
-
-          <span className="text-neutral-700 hidden sm:inline">|</span>
-
-          {/* Plan Status & Validity Badge */}
-          <div className="flex items-center gap-1 shrink-0">
-            <span
-              className={`px-2 py-0.5 rounded font-mono text-[10px] font-semibold ${
-                isPlanExpired
-                  ? 'bg-rose-950/80 text-rose-400 border border-rose-500/30'
-                  : 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/30'
-              }`}
-            >
-              {isPlanExpired ? '0 DAYS (EXPIRED)' : `${currentUser?.daysRemaining || 0}D LEFT`}
-            </span>
-          </div>
-
-          {/* Freemium Credits / Free Prints Badge */}
-          <div className="hidden lg:flex items-center gap-1 px-2 py-0.5 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 text-[10px] font-semibold shrink-0">
-            <Gift className="w-3 h-3 text-amber-400" />
-            <span>{currentUser?.freePrintsLeft ?? 4} Free Prints</span>
-          </div>
-        </div>
-
-        {/* Auth Action Controls */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
-          {/* Master Testing Mode Toggle Button */}
-          <button
-            onClick={() => setShowMasterHUD(!showMasterHUD)}
-            className={`px-2 sm:px-2.5 py-1 rounded border text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-              showMasterHUD
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-neutral-950 border-cyan-400 shadow-md shadow-cyan-500/20'
-                : 'bg-neutral-800 text-cyan-300 border-neutral-700 hover:bg-neutral-750'
-            }`}
-            title="Toggle Master User Testing HUD & Customer Experience Simulator"
-          >
-            <UserCog className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Master Mode</span>
-            <span className="sm:hidden text-[10px]">Master</span>
-          </button>
-
-          {/* Pricing / Upgrade Plans Button */}
-          {onOpenPricing && (
-            <button
-              onClick={onOpenPricing}
-              className="px-2 sm:px-2.5 py-1 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <Zap className="w-3 h-3 text-cyan-400 shrink-0" />
-              <span className="hidden md:inline">Plans (₹29/₹199)</span>
-              <span className="md:hidden">Plans</span>
-            </button>
-          )}
-
-          {/* Switch User / Account Selector */}
-          <button
-            onClick={() => setShowSwitchUserModal(true)}
-            className="px-2 sm:px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-750 text-cyan-300 border border-neutral-700 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
-            title="Switch User Profile"
-          >
-            <UserCheck className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Switch User</span>
-          </button>
-
-          {/* Admin Portal Shortcut if Admin */}
-          {currentUser?.role === 'admin' && onOpenAdminPortal && (
-            <button
-              onClick={onOpenAdminPortal}
-              className="px-2 sm:px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Admin</span>
-            </button>
-          )}
-
-          {/* Logout */}
-          <button
-            onClick={handleLogout}
-            className="p-1 sm:p-1.5 text-neutral-400 hover:text-white transition-colors rounded hover:bg-neutral-800 cursor-pointer shrink-0"
-            title="Sign Out"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
+      <Header
+        currentUser={currentUser}
+        onOpenSignIn={() => {
+          setAuthModalTab('login');
+          setLoginError(null);
+          setShowRegisterModal(true);
+        }}
+        onOpenRegister={() => {
+          setAuthModalTab('register');
+          setRegDuplicateError(null);
+          setShowRegisterModal(true);
+        }}
+        onOpenPricing={onOpenPricing}
+        onOpenAdmin={onOpenAdminPortal}
+        onLogout={handleHardLogout}
+        onToggleMasterHUD={() => setShowMasterHUD(!showMasterHUD)}
+        isMasterHUDOpen={showMasterHUD}
+      />
 
       {/* ---------------------------------------------------- */}
       {/* MAIN VIEWPORT (WRAPPED TOOLS)                        */}
@@ -930,75 +1006,86 @@ export default function AuthAndAccessGuard({
               </div>
             )}
 
-            {/* TAB 2: SIGN IN / SWITCH PROFILE */}
+            {/* TAB 2: SIGN IN TO COUNTER */}
             {authModalTab === 'login' && (
-              <div className="space-y-3 relative z-10">
-                <span className="text-neutral-400 block text-[11px]">
-                  Select an existing registered operator account or admin session:
-                </span>
+              <div className="space-y-4 relative z-10">
+                {loginError && (
+                  <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2 animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{loginError}</span>
+                  </div>
+                )}
 
-                <div className="space-y-2 max-h-[46vh] overflow-y-auto">
-                  {getStoredUsers().map((u) => {
-                    const isCurrent = currentUser?.email === u.email;
-                    const isExp = new Date() > new Date(u.planExpiresAt);
-
-                    return (
-                      <button
-                        key={u._id}
-                        onClick={() => {
-                          handleLoginAs(u.email);
-                          setShowRegisterModal(false);
+                <form onSubmit={handleLoginSubmit} className="space-y-3">
+                  <div>
+                    <label className="text-neutral-300 block mb-1 font-medium">Operator / Admin Email:</label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        required
+                        placeholder="djnitish97@gmail.com"
+                        value={loginEmail}
+                        onChange={(e) => {
+                          setLoginEmail(e.target.value);
+                          if (loginError) setLoginError(null);
                         }}
-                        className={`w-full p-3 rounded-2xl border text-left transition-all flex items-center justify-between cursor-pointer ${
-                          isCurrent
-                            ? 'bg-cyan-950/30 border-cyan-500/50 text-white'
-                            : 'bg-neutral-950/60 border-neutral-800 hover:bg-neutral-800/60 text-neutral-300'
-                        }`}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500 text-xs"
+                      />
+                      <Mail className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-neutral-300 block mb-1 font-medium">Password:</label>
+                    <div className="relative">
+                      <input
+                        type={showPasswordText ? 'text' : 'password'}
+                        required
+                        placeholder="••••••••"
+                        value={loginPassword}
+                        onChange={(e) => {
+                          setLoginPassword(e.target.value);
+                          if (loginError) setLoginError(null);
+                        }}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-10 py-2 text-white font-mono focus:outline-none focus:border-cyan-500 text-xs"
+                      />
+                      <Lock className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswordText(!showPasswordText)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
                       >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-xs text-white">{u.name}</span>
-                            <span
-                              className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-                                u.role === 'admin'
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                  : u.role === 'master'
-                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                                  : 'bg-neutral-800 text-neutral-400'
-                              }`}
-                            >
-                              {u.role === 'master' ? 'MASTER' : u.role.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-neutral-400 font-mono mt-0.5">{u.email}</div>
-                        </div>
-
-                        <div className="text-right">
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-block ${
-                              u.planStatus === 'suspended'
-                                ? 'bg-neutral-800 text-neutral-400'
-                                : isExp
-                                ? 'bg-rose-950/80 text-rose-400'
-                                : 'bg-emerald-950/80 text-emerald-400'
-                            }`}
-                          >
-                            {u.planStatus === 'suspended' ? 'SUSPENDED' : isExp ? 'EXPIRED' : 'ACTIVE'}
-                          </span>
-                        </div>
+                        {showPasswordText ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
-                    );
-                  })}
-                </div>
+                    </div>
+                  </div>
 
-                <div className="pt-2 flex justify-end">
-                  <button
-                    onClick={() => setShowRegisterModal(false)}
-                    className="px-4 py-2 bg-neutral-800 text-neutral-300 rounded-xl"
-                  >
-                    Close
-                  </button>
-                </div>
+                  {/* Admin Credentials Hint */}
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-2.5 text-[11px] text-amber-300/90 font-mono">
+                    <span className="font-bold text-amber-200 block mb-0.5">👑 Super Admin Credentials:</span>
+                    <span>Email: <b className="text-white">djnitish97@gmail.com</b></span>
+                    <br />
+                    <span>Password: <b className="text-white">admin@nk</b></span>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterModal(false)}
+                      className="px-4 py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-xl font-medium text-xs transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingLogin}
+                      className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-neutral-950 font-extrabold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-cyan-500/20 text-xs"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>{isSubmittingLogin ? 'Verifying...' : 'Sign In to Counter'}</span>
+                    </button>
+                  </div>
+                </form>
               </div>
             )}
           </div>
@@ -1006,9 +1093,14 @@ export default function AuthAndAccessGuard({
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* MASTER USER TESTING HUD (SIMULATE USERS EXPERIENCE)   */}
+      {/* GLOBAL FOOTER (MATCHING NTECHBAY-LIBRARY)            */}
       {/* ---------------------------------------------------- */}
-      {showMasterHUD && (
+      <Footer />
+
+      {/* ---------------------------------------------------- */}
+      {/* MASTER USER TESTING HUD (ADMIN ONLY)                 */}
+      {/* ---------------------------------------------------- */}
+      {currentUser?.role === 'admin' && showMasterHUD && (
         <MasterTestingHUD
           currentUser={currentUser}
           onUserSwitched={(user) => {

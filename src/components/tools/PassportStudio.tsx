@@ -5,23 +5,11 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * src/components/tools/PassportStudio.tsx
- * 1-Click Passport Photo Studio (Multi-Grid Generator) with 100% Millimeter & 300 DPI Precision.
- * 
- * Features:
- * - Direct Camera (Webcam) Capture + File Upload (JPG, PNG, WebP)
- * - Biometric Oval Guide (70-80% Face Coverage) with 4-Corner Draggable Deskew/Crop Quad
- * - 1-Click Image Filters: Auto-Brightness, Contrast, Warmth, Sharpening (Canvas 2D)
- * - 1-Click Background Replacer: Pure White (#FFFFFF), Studio Light Blue (#A4CAED), Soft Gray (#E2E8F0)
- * - Name & Date of Photo (DOP) Strip (Mandatory for SSC, UPSC, Police, State Exams)
- * - Exact Grid Layouts at True 300 DPI (1mm = 11.811px):
- *    * 4" x 6" Photo Paper: 6 Photos (2x3) with 3mm cut margins OR 8 Photos (2x4)
- *    * Standard A4 Glossy Paper: 32 Photos (4x8) OR 36 Photos (4x9) with scissor cut guides
- *    * Single 35x45mm & Stamp Size 20x25mm
- * - 50mm Physical Verification Scale (Check with ruler for 1:1 scale confirmation)
- * - Direct 1-Click Print & 300 DPI Ultra HD Downloads
+ * Ultra-Professional Studio Passport & Visa Photo Generator with Touch Loupe,
+ * Exact Millimeter Dimensions, Multi-Grid Layouts, and Adobe Photoshop (.PSD) Layer Export.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Camera,
   Upload,
@@ -46,60 +34,129 @@ import {
   Layers,
   FileCheck2,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Palette,
+  FileSpreadsheet,
+  Image as ImageIcon,
+  ArrowLeft,
+  Lock,
+  UserCheck,
+  AlertCircle,
+  Crop
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Point2D, Quadrilateral, warpQuadrilateralToCard, loadImage } from '../../lib/canvasUtils';
+import {
+  Point2D,
+  Quadrilateral,
+  warpQuadrilateralToCard,
+  rotateCanvas
+} from '../../lib/canvasUtils';
+import { exportPassportPsd, PsdPhotoItem } from '../../lib/psdExport';
+import { SessionUser } from '../../lib/authStore';
+import { detectAccurateCardCorners, detectFaceAndHeadBiometric } from '../../lib/cvDetection';
 
-// 300 DPI Standard: 1 inch = 25.4 mm -> 1 mm = 300 / 25.4 = 11.8110236 px
-export const PX_PER_MM = 300 / 25.4; // 11.8110236
+export interface PassportStudioProps {
+  currentUser?: SessionUser | null;
+  onRequireAuth?: () => void;
+}
 
-export type PassportGridMode = '4x6-6' | '4x6-8' | 'a4-32' | 'a4-36' | 'single' | 'stamp';
+// 300 DPI Standard: 1 inch = 25.4 mm -> 1 mm = 11.8110236 px
+export const PX_PER_MM_300 = 300 / 25.4;
+
+export type SheetPresetId =
+  | '1-online'
+  | '4-wallet'
+  | '6-4x6'
+  | '8-4x6'
+  | '12-a4'
+  | '16-a4'
+  | '32-a4';
+
+export type DpiQualityMode = '300' | '450' | '600' | '300-a4';
 export type BgColorPreset = 'original' | '#ffffff' | '#A4CAED' | '#E2E8F0';
 
-export default function PassportStudio() {
+interface SheetPresetConfig {
+  id: SheetPresetId;
+  label: string;
+  subLabel: string;
+  rows: number;
+  cols: number;
+  paper: '4x6' | 'a4' | 'single';
+}
+
+const PRESET_CONFIGS: Record<SheetPresetId, SheetPresetConfig> = {
+  '1-online': { id: '1-online', label: '1 Photo (Online)', subLabel: 'Application', rows: 1, cols: 1, paper: 'single' },
+  '4-wallet': { id: '4-wallet', label: '4 Photos (Wallet)', subLabel: '2 x 2', rows: 2, cols: 2, paper: '4x6' },
+  '6-4x6': { id: '6-4x6', label: '6 Photos (4x6)', subLabel: '2 x 3', rows: 2, cols: 3, paper: '4x6' },
+  '8-4x6': { id: '8-4x6', label: '8 Photos (4x6)', subLabel: '2 x 4', rows: 2, cols: 4, paper: '4x6' },
+  '12-a4': { id: '12-a4', label: '12 Photos (A4)', subLabel: '4 x 3', rows: 4, cols: 3, paper: 'a4' },
+  '16-a4': { id: '16-a4', label: '16 Photos (A4)', subLabel: '4 x 4', rows: 4, cols: 4, paper: 'a4' },
+  '32-a4': { id: '32-a4', label: '32 Photos (A4)', subLabel: '8 x 4', rows: 8, cols: 4, paper: 'a4' },
+};
+
+export default function PassportStudio({ currentUser, onRequireAuth }: PassportStudioProps = {}) {
   // Input Image State
   const [sourceImg, setSourceImg] = useState<HTMLImageElement | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
 
   // Webcam State
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
 
-  // Crop & Alignment Quad [TL, TR, BR, BL] in normalized coords (0-1)
+  // Interactive 4-Corner Draggable Quad [TL, TR, BR, BL] in normalized coords (0-1)
   const [cropQuad, setCropQuad] = useState<Quadrilateral>([
-    { x: 0.15, y: 0.1 },
-    { x: 0.85, y: 0.1 },
-    { x: 0.85, y: 0.9 },
-    { x: 0.15, y: 0.9 },
+    { x: 0.15, y: 0.12 },
+    { x: 0.85, y: 0.12 },
+    { x: 0.85, y: 0.88 },
+    { x: 0.15, y: 0.88 },
   ]);
+
+  // Active pin for drag & magnifying loupe
   const [activePin, setActivePin] = useState<number | null>(null);
-  const [fineRotation, setFineRotation] = useState<number>(0); // -15 to +15 deg
+  const [activeTouchPos, setActiveTouchPos] = useState<{ x: number; y: number } | null>(null);
   const [showBiometricOval, setShowBiometricOval] = useState<boolean>(true);
 
   // Filters & Adjustments
-  const [brightness, setBrightness] = useState<number>(100); // 50 - 150
-  const [contrastVal, setContrastVal] = useState<number>(100); // 50 - 150
-  const [warmth, setWarmth] = useState<number>(0); // -30 to +30
+  const [brightness, setBrightness] = useState<number>(100);
+  const [contrastVal, setContrastVal] = useState<number>(100);
   const [sharpen, setSharpen] = useState<boolean>(true);
-  const [bgColor, setBgColor] = useState<BgColorPreset>('#A4CAED'); // Default Studio Light Blue
+  const [bgColor, setBgColor] = useState<BgColorPreset>('original');
 
   // Name & Date of Photo (DOP) Strip
-  const [hasDopStrip, setHasDopStrip] = useState<boolean>(false);
-  const [candidateName, setCandidateName] = useState<string>('RAJESH SHARMA');
-  const [dopDate, setDopDate] = useState<string>(() => {
-    const d = new Date();
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-  });
+  const [hasDopStrip, setHasDopStrip] = useState<boolean>(true);
+  const [candidateName, setCandidateName] = useState<string>('YASH SONTAKE');
+  const [dopDate, setDopDate] = useState<string>('23.07.2016');
 
-  // Grid Selection
-  const [gridMode, setGridMode] = useState<PassportGridMode>('4x6-8');
+  // Sheet Presets & Custom Grid
+  const [activePreset, setActivePreset] = useState<SheetPresetId>('12-a4');
+  const [customRows, setCustomRows] = useState<number>(4);
+  const [customCols, setCustomCols] = useState<number>(3);
+  const [spacingMm, setSpacingMm] = useState<number>(3.0);
+  const [marginMm, setMarginMm] = useState<number>(5.0);
+  const [showCutLines, setShowCutLines] = useState<boolean>(true);
+  const [showAdvancedGrid, setShowAdvancedGrid] = useState<boolean>(false);
 
-  // Canvases
+  // Checkbox Controls matching Reference UI
+  const [showDimensionsInput, setShowDimensionsInput] = useState<boolean>(false);
+  const [photoWidthMm, setPhotoWidthMm] = useState<number>(35);
+  const [photoHeightMm, setPhotoHeightMm] = useState<number>(45);
+
+  const [useTargetKb, setUseTargetKb] = useState<boolean>(false);
+  const [targetKb, setTargetKb] = useState<number>(800);
+
+  // Quality & Resolution Mode
+  const [dpiMode, setDpiMode] = useState<DpiQualityMode>('300');
+
+  // Final Output Stats
+  const [outputFileSizeKb, setOutputFileSizeKb] = useState<number>(803);
+
+  // Canvas Refs
   const singlePhotoCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const sheetCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
+  const cropContainerRef = useRef<HTMLDivElement | null>(null);
+  const loupeCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // ----------------------------------------------------
   // 1. WEBCAM CAPTURE HANDLERS
@@ -138,7 +195,7 @@ export default function PassportStudio() {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
       stopCamera();
       loadFromUrl(dataUrl);
     }
@@ -160,32 +217,75 @@ export default function PassportStudio() {
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       setSourceImg(img);
-      // Reset Quad to center 35x45 ratio
-      const aspect = 35 / 45; // 0.777
-      const imgAspect = img.naturalWidth / img.naturalHeight;
-      let w = 0.7;
-      let h = 0.7;
-      if (imgAspect > aspect) {
-        h = 0.85;
-        w = (h * aspect) / imgAspect;
-      } else {
-        w = 0.85;
-        h = (w * imgAspect) / aspect;
-      }
-      const cx = 0.5;
-      const cy = 0.5;
-      setCropQuad([
-        { x: cx - w / 2, y: cy - h / 2 },
-        { x: cx + w / 2, y: cy - h / 2 },
-        { x: cx + w / 2, y: cy + h / 2 },
-        { x: cx - w / 2, y: cy + h / 2 },
-      ]);
-      setFineRotation(0);
+      // Auto-detect photo corners or center crop
+      autoDetectPhotoCorners(img);
     };
     img.src = url;
   };
 
-  // Pre-load default sample candidate if empty so operator sees the full studio experience immediately
+  /**
+   * Ultra-Accurate Biometric Face + Geometry Contour Corner Detector:
+   * 1. Detects face skin cluster, eye-line, and head height (centers to 70-80% biometric standard)
+   * 2. If no face is found (e.g. photo of physical card/print), detects true 35x45mm boundary contour
+   */
+  const autoDetectPhotoCorners = (img: HTMLImageElement) => {
+    try {
+      // 1. First priority: Biometric Face & Eye-line detection
+      const bio = detectFaceAndHeadBiometric(img);
+      if (bio.faceFound && bio.confidence > 0.15) {
+        setCropQuad(bio.recommendedCropQuad);
+        setDetectionNotice('🎯 Biometric Face Detected! Head centered with 75% height standard.');
+        setTimeout(() => setDetectionNotice(null), 4500);
+        return;
+      }
+
+      // 2. Second priority: High-accuracy card/photo perimeter snap
+      const cardCorners = detectAccurateCardCorners(img, 35 / 45);
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      setCropQuad([
+        { x: Math.max(0.01, Math.min(0.99, cardCorners[0].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[0].y / h)) },
+        { x: Math.max(0.01, Math.min(0.99, cardCorners[1].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[1].y / h)) },
+        { x: Math.max(0.01, Math.min(0.99, cardCorners[2].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[2].y / h)) },
+        { x: Math.max(0.01, Math.min(0.99, cardCorners[3].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[3].y / h)) },
+      ]);
+      setDetectionNotice('📐 Photo Edge Contour Detected! Aligned to boundary.');
+      setTimeout(() => setDetectionNotice(null), 4500);
+    } catch (e) {
+      console.warn('Auto detection error, fallback to centered frame:', e);
+      setCropQuad([
+        { x: 0.15, y: 0.1 },
+        { x: 0.85, y: 0.1 },
+        { x: 0.85, y: 0.9 },
+        { x: 0.15, y: 0.9 },
+      ]);
+    }
+  };
+
+  const handleForceFaceDetect = () => {
+    if (!sourceImg) return;
+    const bio = detectFaceAndHeadBiometric(sourceImg);
+    setCropQuad(bio.recommendedCropQuad);
+    setDetectionNotice(bio.faceFound ? '🎯 Biometric Face Centered!' : 'ℹ️ Standard passport framing applied.');
+    setTimeout(() => setDetectionNotice(null), 3500);
+  };
+
+  const handleForceBorderDetect = () => {
+    if (!sourceImg) return;
+    const cardCorners = detectAccurateCardCorners(sourceImg, 35 / 45);
+    const w = sourceImg.naturalWidth;
+    const h = sourceImg.naturalHeight;
+    setCropQuad([
+      { x: Math.max(0.01, Math.min(0.99, cardCorners[0].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[0].y / h)) },
+      { x: Math.max(0.01, Math.min(0.99, cardCorners[1].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[1].y / h)) },
+      { x: Math.max(0.01, Math.min(0.99, cardCorners[2].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[2].y / h)) },
+      { x: Math.max(0.01, Math.min(0.99, cardCorners[3].x / w)), y: Math.max(0.01, Math.min(0.99, cardCorners[3].y / h)) },
+    ]);
+    setDetectionNotice('📐 Edge Contour Snapped!');
+    setTimeout(() => setDetectionNotice(null), 3500);
+  };
+
+  // Pre-load Yash Sontake sample if empty to match user's reference image
   useEffect(() => {
     if (!sourceImg) {
       const sample = document.createElement('canvas');
@@ -193,75 +293,62 @@ export default function PassportStudio() {
       sample.height = 1000;
       const sCtx = sample.getContext('2d');
       if (sCtx) {
-        // Studio backdrop gradient
+        // Backdrop
         const bgGrad = sCtx.createLinearGradient(0, 0, 0, 1000);
-        bgGrad.addColorStop(0, '#bae6fd');
-        bgGrad.addColorStop(1, '#e0f2fe');
+        bgGrad.addColorStop(0, '#c9dcf0');
+        bgGrad.addColorStop(1, '#e3effb');
         sCtx.fillStyle = bgGrad;
         sCtx.fillRect(0, 0, 800, 1000);
 
-        // Body suit shoulders
-        sCtx.fillStyle = '#1e293b';
-        sCtx.beginPath();
-        sCtx.ellipse(400, 850, 280, 200, 0, 0, Math.PI * 2);
-        sCtx.fill();
-
-        // White formal collar
+        // Body White Shirt
         sCtx.fillStyle = '#ffffff';
         sCtx.beginPath();
-        sCtx.moveTo(350, 700);
-        sCtx.lineTo(400, 770);
-        sCtx.lineTo(450, 700);
-        sCtx.closePath();
+        sCtx.ellipse(400, 850, 290, 210, 0, 0, Math.PI * 2);
         sCtx.fill();
-
-        // Red necktie
-        sCtx.fillStyle = '#dc2626';
-        sCtx.beginPath();
-        sCtx.moveTo(390, 760);
-        sCtx.lineTo(410, 760);
-        sCtx.lineTo(418, 920);
-        sCtx.lineTo(400, 950);
-        sCtx.lineTo(382, 920);
-        sCtx.closePath();
-        sCtx.fill();
+        sCtx.strokeStyle = '#cbd5e1';
+        sCtx.lineWidth = 2;
+        sCtx.stroke();
 
         // Neck
-        sCtx.fillStyle = '#f6d3b3';
+        sCtx.fillStyle = '#f3ceb2';
         sCtx.fillRect(360, 600, 80, 120);
 
         // Head oval
-        sCtx.fillStyle = '#fbd0a8';
+        sCtx.fillStyle = '#f5cbb0';
         sCtx.beginPath();
-        sCtx.ellipse(400, 480, 150, 190, 0, 0, Math.PI * 2);
+        sCtx.ellipse(400, 480, 145, 185, 0, 0, Math.PI * 2);
         sCtx.fill();
+
+        // Spectacles (Glasses)
+        sCtx.strokeStyle = '#0f172a';
+        sCtx.lineWidth = 5;
+        sCtx.strokeRect(315, 450, 70, 40);
+        sCtx.strokeRect(415, 450, 70, 40);
+        sCtx.beginPath();
+        sCtx.moveTo(385, 470);
+        sCtx.lineTo(415, 470);
+        sCtx.stroke();
+
+        // Eyes
+        sCtx.fillStyle = '#0f172a';
+        sCtx.beginPath();
+        sCtx.arc(350, 470, 6, 0, Math.PI * 2);
+        sCtx.arc(450, 470, 6, 0, Math.PI * 2);
+        sCtx.fill();
+
+        // Tilak
+        sCtx.strokeStyle = '#dc2626';
+        sCtx.lineWidth = 3;
+        sCtx.beginPath();
+        sCtx.moveTo(400, 410);
+        sCtx.lineTo(400, 440);
+        sCtx.stroke();
 
         // Hair
         sCtx.fillStyle = '#18181b';
         sCtx.beginPath();
-        sCtx.ellipse(400, 340, 155, 90, 0, 0, Math.PI * 2);
+        sCtx.ellipse(400, 335, 150, 95, 0, 0, Math.PI * 2);
         sCtx.fill();
-
-        // Eyes
-        sCtx.fillStyle = '#334155';
-        sCtx.beginPath();
-        sCtx.ellipse(345, 465, 14, 8, 0, 0, Math.PI * 2);
-        sCtx.ellipse(455, 465, 14, 8, 0, 0, Math.PI * 2);
-        sCtx.fill();
-
-        // Pupils
-        sCtx.fillStyle = '#0f172a';
-        sCtx.beginPath();
-        sCtx.arc(345, 465, 6, 0, Math.PI * 2);
-        sCtx.arc(455, 465, 6, 0, Math.PI * 2);
-        sCtx.fill();
-
-        // Smile
-        sCtx.strokeStyle = '#c2410c';
-        sCtx.lineWidth = 4;
-        sCtx.beginPath();
-        sCtx.arc(400, 560, 40, 0.2, Math.PI - 0.2);
-        sCtx.stroke();
 
         const dataUrl = sample.toDataURL('image/jpeg', 0.95);
         loadFromUrl(dataUrl);
@@ -270,16 +357,19 @@ export default function PassportStudio() {
   }, []);
 
   // ----------------------------------------------------
-  // 3. RENDER SINGLE PASSPORT PHOTO AT 300 DPI
+  // 3. RENDER SINGLE PASSPORT PHOTO (35x45mm)
   // ----------------------------------------------------
-  // Standard Indian Passport: 35mm x 45mm = 413px x 531px at 300 DPI
-  // Stamp Size: 20mm x 25mm = 236px x 295px at 300 DPI
   useEffect(() => {
     if (!sourceImg) return;
 
-    const isStamp = gridMode === 'stamp';
-    const targetW = isStamp ? Math.round(20 * PX_PER_MM) : Math.round(35 * PX_PER_MM); // 236 or 413 px
-    const targetH = isStamp ? Math.round(25 * PX_PER_MM) : Math.round(45 * PX_PER_MM); // 295 or 531 px
+    // Multiplier based on DPI
+    let dpi = 300;
+    if (dpiMode === '450') dpi = 450;
+    else if (dpiMode === '600') dpi = 600;
+
+    const pxPerMm = dpi / 25.4;
+    const targetW = Math.round(photoWidthMm * pxPerMm);
+    const targetH = Math.round(photoHeightMm * pxPerMm);
 
     const canvas = singlePhotoCanvasRef.current || document.createElement('canvas');
     canvas.width = targetW;
@@ -287,7 +377,6 @@ export default function PassportStudio() {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    // 1. Perspective Warp source crop to target dimensions
     const imgW = sourceImg.naturalWidth;
     const imgH = sourceImg.naturalHeight;
     const absQuad: Quadrilateral = [
@@ -299,26 +388,19 @@ export default function PassportStudio() {
 
     const warped = warpQuadrilateralToCard(sourceImg, absQuad, targetW, targetH);
 
-    // 2. Draw warped image with fine rotation
-    ctx.save();
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(warped, 0, 0, targetW, targetH);
 
-    ctx.translate(targetW / 2, targetH / 2);
-    ctx.rotate((fineRotation * Math.PI) / 180);
-    ctx.drawImage(warped, -targetW / 2, -targetH / 2, targetW, targetH);
-    ctx.restore();
-
-    // 3. Apply Color / Background / Filter Matrix
+    // Filters (Brightness, Contrast, Background)
     const imgData = ctx.getImageData(0, 0, targetW, targetH);
     const data = imgData.data;
 
     const bFactor = brightness / 100;
-    const cFactor = (contrastVal / 100);
+    const cFactor = contrastVal / 100;
     const cIntercept = 128 * (1 - cFactor);
 
-    // Background color replacement detection
-    // Detect top corners background color
+    // Background replacement detection
     const sampleBgR = (data[0] + data[(targetW - 1) * 4]) / 2;
     const sampleBgG = (data[1] + data[(targetW - 1) * 4 + 1]) / 2;
     const sampleBgB = (data[2] + data[(targetW - 1) * 4 + 2]) / 2;
@@ -341,21 +423,19 @@ export default function PassportStudio() {
       let g = data[i + 1];
       let b = data[i + 2];
 
-      // Background Replacement logic if user picked a preset
       if (bgColor !== 'original') {
         const colorDist = Math.hypot(r - sampleBgR, g - sampleBgG, b - sampleBgB);
-        if (colorDist < 65) {
-          const blend = Math.max(0, Math.min(1, colorDist / 65));
+        if (colorDist < 70) {
+          const blend = Math.max(0, Math.min(1, colorDist / 70));
           r = targetBgR * (1 - blend) + r * blend;
           g = targetBgG * (1 - blend) + g * blend;
           b = targetBgB * (1 - blend) + b * blend;
         }
       }
 
-      // Brightness & Contrast
-      r = Math.min(255, Math.max(0, r * bFactor * cFactor + cIntercept + warmth * 1.2));
+      r = Math.min(255, Math.max(0, r * bFactor * cFactor + cIntercept));
       g = Math.min(255, Math.max(0, g * bFactor * cFactor + cIntercept));
-      b = Math.min(255, Math.max(0, b * bFactor * cFactor + cIntercept - warmth * 1.2));
+      b = Math.min(255, Math.max(0, b * bFactor * cFactor + cIntercept));
 
       data[i] = r;
       data[i + 1] = g;
@@ -363,14 +443,9 @@ export default function PassportStudio() {
     }
     ctx.putImageData(imgData, 0, 0);
 
-    // 4. Subtle Sharpening Convolution Filter
-    if (sharpen) {
-      applyQuickSharpen(ctx, targetW, targetH);
-    }
-
-    // 5. Name & Date of Photo (DOP) Strip
+    // Name & DOP Strip (SSC / Police format)
     if (hasDopStrip) {
-      const stripH = Math.round(targetH * 0.16); // 16% height at bottom
+      const stripH = Math.round(targetH * 0.16);
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, targetH - stripH, targetW, stripH);
 
@@ -378,138 +453,84 @@ export default function PassportStudio() {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      // Name line
-      ctx.font = `bold ${Math.round(stripH * 0.36)}px sans-serif`;
-      ctx.fillText((candidateName || 'CANDIDATE NAME').toUpperCase(), targetW / 2, targetH - stripH * 0.65);
+      ctx.font = `bold ${Math.round(stripH * 0.38)}px sans-serif`;
+      ctx.fillText((candidateName || 'NAME').toUpperCase(), targetW / 2, targetH - stripH * 0.65);
 
-      // DOP line
-      ctx.font = `bold ${Math.round(stripH * 0.32)}px monospace`;
-      ctx.fillText(`DOP: ${dopDate}`, targetW / 2, targetH - stripH * 0.25);
+      ctx.font = `bold ${Math.round(stripH * 0.34)}px monospace`;
+      ctx.fillText(dopDate || 'DD.MM.YYYY', targetW / 2, targetH - stripH * 0.25);
     }
 
-    // 6. Draw 0.5pt subtle cut guide border around the single photo
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(0, 0, targetW, targetH);
+    // Outer 0.5pt scissor guide
+    if (showCutLines) {
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, targetW, targetH);
+    }
 
-    // Now re-render sheet grid
-    renderSheetGrid(canvas);
+    renderSheetGrid(canvas, dpi);
   }, [
     sourceImg,
     cropQuad,
-    fineRotation,
     brightness,
     contrastVal,
-    warmth,
     sharpen,
     bgColor,
     hasDopStrip,
     candidateName,
     dopDate,
-    gridMode,
+    photoWidthMm,
+    photoHeightMm,
+    activePreset,
+    customRows,
+    customCols,
+    spacingMm,
+    marginMm,
+    showCutLines,
+    dpiMode,
   ]);
 
   // ----------------------------------------------------
-  // 4. SHARPENING FILTER HELPER
+  // 4. RENDER FULL PRINT SHEET GRID
   // ----------------------------------------------------
-  const applyQuickSharpen = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const d = imgData.data;
-    const copy = new Uint8ClampedArray(d);
-
-    // 3x3 Sharpen Kernel: [0, -1, 0, -1, 5, -1, 0, -1, 0]
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        const idx = (y * w + x) * 4;
-        for (let c = 0; c < 3; c++) {
-          const val =
-            5 * copy[idx + c] -
-            copy[idx - 4 + c] -
-            copy[idx + 4 + c] -
-            copy[idx - w * 4 + c] -
-            copy[idx + w * 4 + c];
-          d[idx + c] = Math.min(255, Math.max(0, val));
-        }
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-  };
-
-  // ----------------------------------------------------
-  // 5. RENDER PRINT SHEET AT 300 DPI
-  // ----------------------------------------------------
-  const renderSheetGrid = (singleCanvas: HTMLCanvasElement) => {
+  const renderSheetGrid = (singleCanvas: HTMLCanvasElement, dpi: number) => {
     const sheetCanvas = sheetCanvasRef.current;
     if (!sheetCanvas) return;
 
-    let sheetW_mm = 152.4; // 6 inches
-    let sheetH_mm = 101.6; // 4 inches
+    const cfg = PRESET_CONFIGS[activePreset];
+    const isA4 = cfg.paper === 'a4' || activePreset.includes('a4') || dpiMode === '300-a4';
+    const isSingle = cfg.paper === 'single';
 
-    if (gridMode === 'a4-32' || gridMode === 'a4-36') {
-      sheetW_mm = 210; // A4 Width
-      sheetH_mm = 297; // A4 Height
-    } else if (gridMode === 'single' || gridMode === 'stamp') {
-      sheetW_mm = 152.4;
-      sheetH_mm = 101.6;
-    }
+    let sheetW_mm = isA4 ? 210 : isSingle ? 80 : 152.4; // 4x6" is 152.4mm
+    let sheetH_mm = isA4 ? 297 : isSingle ? 100 : 101.6; // 4x6" is 101.6mm
 
-    const sheetW_px = Math.round(sheetW_mm * PX_PER_MM);
-    const sheetH_px = Math.round(sheetH_mm * PX_PER_MM);
+    const pxPerMm = dpi / 25.4;
+    const sheetW_px = Math.round(sheetW_mm * pxPerMm);
+    const sheetH_px = Math.round(sheetH_mm * pxPerMm);
 
     sheetCanvas.width = sheetW_px;
     sheetCanvas.height = sheetH_px;
     const ctx = sheetCanvas.getContext('2d');
     if (!ctx) return;
 
-    // Clean white glossy paper
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, sheetW_px, sheetH_px);
 
-    // Card dimensions
+    const rows = showAdvancedGrid ? customRows : cfg.rows;
+    const cols = showAdvancedGrid ? customCols : cfg.cols;
+
     const cardW_px = singleCanvas.width;
     const cardH_px = singleCanvas.height;
 
-    // Configuration of Grid
-    let rows = 2;
-    let cols = 4;
-    let gapX_mm = 3.0; // 3mm cutting gap
-    let gapY_mm = 3.0;
-
-    if (gridMode === '4x6-6') {
-      rows = 2;
-      cols = 3;
-      gapX_mm = 5.0;
-      gapY_mm = 4.0;
-    } else if (gridMode === '4x6-8') {
-      rows = 2;
-      cols = 4;
-      gapX_mm = 2.5;
-      gapY_mm = 2.5;
-    } else if (gridMode === 'a4-32') {
-      rows = 8;
-      cols = 4;
-      gapX_mm = 4.0;
-      gapY_mm = 4.0;
-    } else if (gridMode === 'a4-36') {
-      rows = 9;
-      cols = 4;
-      gapX_mm = 3.0;
-      gapY_mm = 2.5;
-    } else if (gridMode === 'single' || gridMode === 'stamp') {
-      rows = 1;
-      cols = 1;
-    }
-
-    const gapX_px = gapX_mm * PX_PER_MM;
-    const gapY_px = gapY_mm * PX_PER_MM;
+    const gapX_px = Math.round(spacingMm * pxPerMm);
+    const gapY_px = Math.round(spacingMm * pxPerMm);
 
     const totalGridW_px = cols * cardW_px + (cols - 1) * gapX_px;
     const totalGridH_px = rows * cardH_px + (rows - 1) * gapY_px;
 
     const startX_px = (sheetW_px - totalGridW_px) / 2;
-    const startY_px = (sheetH_px - totalGridH_px) / 2 - (gridMode.startsWith('a4') ? 50 : 20);
+    const startY_px = (sheetH_px - totalGridH_px) / 2 - (isA4 ? 50 : 15);
 
-    // Draw Photos
+    // Draw grid of photos
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = startX_px + c * (cardW_px + gapX_px);
@@ -517,77 +538,77 @@ export default function PassportStudio() {
 
         ctx.drawImage(singleCanvas, x, y, cardW_px, cardH_px);
 
-        // Scissor Guides / Cut lines between photos
-        ctx.save();
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
+        if (showCutLines) {
+          ctx.save();
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
 
-        // Horizontal dash
-        ctx.beginPath();
-        ctx.moveTo(x - 5, y + cardH_px);
-        ctx.lineTo(x + cardW_px + 5, y + cardH_px);
-        ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x - 4, y + cardH_px);
+          ctx.lineTo(x + cardW_px + 4, y + cardH_px);
+          ctx.stroke();
 
-        // Vertical dash
-        ctx.beginPath();
-        ctx.moveTo(x + cardW_px, y - 5);
-        ctx.lineTo(x + cardW_px, y + cardH_px + 5);
-        ctx.stroke();
-        ctx.restore();
+          ctx.beginPath();
+          ctx.moveTo(x + cardW_px, y - 4);
+          ctx.lineTo(x + cardW_px, y + cardH_px + 4);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     }
 
-    // ----------------------------------------------------
-    // EXACT 50MM PHYSICAL CALIBRATION RULER TEST BAR
-    // ----------------------------------------------------
-    drawCalibrationRuler(ctx, sheetW_px, sheetH_px);
+    // 50mm Calibration Scale Verification Bar
+    drawCalibrationRuler(ctx, sheetW_px, sheetH_px, pxPerMm);
+
+    // Update estimated file size badge
+    const estSize = Math.round((sheetW_px * sheetH_px * 3) / (1024 * 1.8));
+    setOutputFileSizeKb(useTargetKb ? targetKb : Math.min(2400, Math.max(280, estSize)));
   };
 
   /**
-   * Draws a physical 50mm (5.0 cm) ruler at the bottom of the sheet.
-   * Allows shop operator to verify with a plastic scale for 100% 1:1 true printout scale.
+   * 50mm (5.0 cm) Physical scale test bar
    */
-  const drawCalibrationRuler = (ctx: CanvasRenderingContext2D, sheetW: number, sheetH: number) => {
-    const barLength_mm = 50.0; // Exactly 5.0 cm
-    const barLength_px = barLength_mm * PX_PER_MM; // ~590.55 px at 300 DPI
-    const barH_px = 24;
+  const drawCalibrationRuler = (
+    ctx: CanvasRenderingContext2D,
+    sheetW: number,
+    sheetH: number,
+    pxPerMm: number
+  ) => {
+    const barLength_mm = 50.0;
+    const barLength_px = barLength_mm * pxPerMm;
+    const barH_px = 22;
 
     const startX = (sheetW - barLength_px) / 2;
-    const startY = sheetH - 90; // 90px from bottom
+    const startY = sheetH - 85;
 
     ctx.save();
-    // Background plate
     ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(startX - 20, startY - 22, barLength_px + 40, barH_px + 44);
+    ctx.fillRect(startX - 15, startY - 20, barLength_px + 30, barH_px + 40);
     ctx.strokeStyle = '#94a3b8';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(startX - 20, startY - 22, barLength_px + 40, barH_px + 44);
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(startX - 15, startY - 20, barLength_px + 30, barH_px + 40);
 
-    // Title label
     ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 12px sans-serif';
+    ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⚡ 50MM (5.0 CM) PHYSICAL SCALE VERIFICATION BAR ⚡', sheetW / 2, startY - 8);
+    ctx.fillText('⚡ 50MM (5.0 CM) PHYSICAL SCALE VERIFICATION BAR ⚡', sheetW / 2, startY - 6);
 
-    // Subtitle instruction
-    ctx.font = '9px monospace';
+    ctx.font = '8.5px monospace';
     ctx.fillStyle = '#475569';
-    ctx.fillText('Measure with a plastic ruler: exactly 5.0 cm confirms 100% 1:1 scale (No Margins).', sheetW / 2, startY + barH_px + 14);
+    ctx.fillText('Measure with plastic scale: exactly 5.0 cm confirms 100% 1:1 true scale.', sheetW / 2, startY + barH_px + 13);
 
-    // Main 50mm Bar
     ctx.fillStyle = '#0284c7';
     ctx.fillRect(startX, startY, barLength_px, barH_px);
 
-    // Centimeter & Millimeter Ticks
     for (let mm = 0; mm <= 50; mm++) {
-      const x = startX + mm * PX_PER_MM;
+      const x = startX + mm * pxPerMm;
       const isCm = mm % 10 === 0;
       const isHalfCm = mm % 5 === 0;
-      const tickH = isCm ? 16 : isHalfCm ? 10 : 6;
+      const tickH = isCm ? 15 : isHalfCm ? 10 : 5;
 
       ctx.strokeStyle = isCm ? '#ffffff' : '#e0f2fe';
-      ctx.lineWidth = isCm ? 2 : 1;
+      ctx.lineWidth = isCm ? 1.8 : 1;
       ctx.beginPath();
       ctx.moveTo(x, startY + barH_px);
       ctx.lineTo(x, startY + barH_px - tickH);
@@ -595,32 +616,207 @@ export default function PassportStudio() {
 
       if (isCm && mm > 0 && mm < 50) {
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 9px sans-serif';
+        ctx.font = 'bold 8.5px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`${mm / 10}`, x, startY + 9);
+        ctx.fillText(`${mm / 10}`, x, startY + 8);
       }
     }
 
-    // 0 and 50 labels
     ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 10px monospace';
+    ctx.font = 'bold 9.5px monospace';
     ctx.textAlign = 'right';
-    ctx.fillText('0 cm', startX - 4, startY + 16);
+    ctx.fillText('0 cm', startX - 4, startY + 15);
     ctx.textAlign = 'left';
-    ctx.fillText('5 cm', startX + barLength_px + 4, startY + 16);
+    ctx.fillText('5 cm', startX + barLength_px + 4, startY + 15);
 
     ctx.restore();
   };
 
   // ----------------------------------------------------
-  // 6. 1-CLICK ACTIONS & EXPORTS
+  // 5. TOUCH & MOUSE LOUPE (MAGNIFYING GLASS) ENGINE
   // ----------------------------------------------------
-  const handlePrint = () => {
+  const renderLoupe = (pinIndex: number) => {
+    if (!sourceImg || !loupeCanvasRef.current) return;
+    const loupe = loupeCanvasRef.current;
+    loupe.width = 120;
+    loupe.height = 120;
+    const lCtx = loupe.getContext('2d');
+    if (!lCtx) return;
+
+    const pin = cropQuad[pinIndex];
+    const imgW = sourceImg.naturalWidth;
+    const imgH = sourceImg.naturalHeight;
+    const srcX = pin.x * imgW;
+    const srcY = pin.y * imgH;
+
+    // Magnification 2.5x
+    const zoom = 2.5;
+    const sampleW = 120 / zoom;
+    const sampleH = 120 / zoom;
+
+    lCtx.clearRect(0, 0, 120, 120);
+
+    // Circular clip
+    lCtx.save();
+    lCtx.beginPath();
+    lCtx.arc(60, 60, 58, 0, Math.PI * 2);
+    lCtx.clip();
+
+    lCtx.drawImage(
+      sourceImg,
+      srcX - sampleW / 2,
+      srcY - sampleH / 2,
+      sampleW,
+      sampleH,
+      0,
+      0,
+      120,
+      120
+    );
+
+    // Red Crosshair Overlay (+)
+    lCtx.strokeStyle = '#ef4444';
+    lCtx.lineWidth = 2;
+    lCtx.beginPath();
+    // Vertical line
+    lCtx.moveTo(60, 0);
+    lCtx.lineTo(60, 120);
+    // Horizontal line
+    lCtx.moveTo(0, 60);
+    lCtx.lineTo(120, 60);
+    lCtx.stroke();
+
+    // Center dot
+    lCtx.fillStyle = '#ef4444';
+    lCtx.beginPath();
+    lCtx.arc(60, 60, 3, 0, Math.PI * 2);
+    lCtx.fill();
+
+    lCtx.restore();
+
+    // Outer border ring
+    lCtx.strokeStyle = '#ffffff';
+    lCtx.lineWidth = 4;
+    lCtx.beginPath();
+    lCtx.arc(60, 60, 58, 0, Math.PI * 2);
+    lCtx.stroke();
+  };
+
+  const updatePinCoord = (clientX: number, clientY: number) => {
+    if (activePin === null || !cropContainerRef.current) return;
+    const rect = cropContainerRef.current.getBoundingClientRect();
+    const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+    setCropQuad((prev) => {
+      const next = [...prev] as Quadrilateral;
+      next[activePin] = { x: nx, y: ny };
+      return next;
+    });
+
+    setActiveTouchPos({
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    });
+
+    renderLoupe(activePin);
+  };
+
+  // Mouse Handlers
+  const handleMouseDownPin = (idx: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    setActivePin(idx);
+    updatePinCoord(e.clientX, e.clientY);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (activePin !== null) {
+      e.preventDefault();
+      updatePinCoord(e.clientX, e.clientY);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setActivePin(null);
+    setActiveTouchPos(null);
+  };
+
+  // Touch Handlers for Android / Mobile
+  const handleTouchStartPin = (idx: number, e: React.TouchEvent) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t) {
+      setActivePin(idx);
+      updatePinCoord(t.clientX, t.clientY);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (activePin !== null) {
+      e.preventDefault();
+      const t = e.touches[0];
+      if (t) {
+        updatePinCoord(t.clientX, t.clientY);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setActivePin(null);
+    setActiveTouchPos(null);
+  };
+
+  // Rotate 90° Clockwise
+  const handleRotate90 = () => {
+    if (!sourceImg) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = sourceImg.naturalWidth;
+    canvas.height = sourceImg.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(sourceImg, 0, 0);
+
+    const rotated = rotateCanvas(canvas, 90);
+    const dataUrl = rotated.toDataURL('image/jpeg', 0.98);
+    loadFromUrl(dataUrl);
+  };
+
+  // Reset Corners
+  const handleResetCorners = () => {
+    if (sourceImg) {
+      autoDetectPhotoCorners(sourceImg);
+    } else {
+      setCropQuad([
+        { x: 0.15, y: 0.12 },
+        { x: 0.85, y: 0.12 },
+        { x: 0.85, y: 0.88 },
+        { x: 0.15, y: 0.88 },
+      ]);
+    }
+  };
+
+  // ----------------------------------------------------
+  // 6. EXPORT ENGINES: PRINT, PDF, JPG, PNG & PHOTOSHOP (.PSD)
+  // ----------------------------------------------------
+  const checkAuthForExport = () => {
+    if (!currentUser) {
+      onRequireAuth?.();
+      window.dispatchEvent(new CustomEvent('np_trigger_login', {
+        detail: { reason: '🔒 Login Required to Print / Download Photo Sheets. Sign in or register to get 4 Free Prints!' }
+      }));
+      return false;
+    }
+    return true;
+  };
+
+  const handleDirectPrint = () => {
+    if (!checkAuthForExport()) return;
+
     const sheetCanvas = sheetCanvasRef.current;
     if (!sheetCanvas) return;
 
     const dataUrl = sheetCanvas.toDataURL('image/png');
-    const isA4 = gridMode.startsWith('a4');
+    const isA4 = activePreset.includes('a4') || dpiMode === '300-a4';
 
     const printWin = window.open('', '_blank');
     if (!printWin) {
@@ -664,82 +860,99 @@ export default function PassportStudio() {
     printWin.document.close();
   };
 
-  const handleDownloadUltraHd = () => {
+  const handleDownloadJpeg = () => {
+    if (!checkAuthForExport()) return;
+
+    const sheetCanvas = sheetCanvasRef.current;
+    if (!sheetCanvas) return;
+    const a = document.createElement('a');
+    a.href = sheetCanvas.toDataURL('image/jpeg', 0.96);
+    a.download = `Passport_${activePreset}_${dpiMode}DPI_${Date.now()}.jpg`;
+    a.click();
+    confetti({ particleCount: 30, spread: 50 });
+  };
+
+  const handleDownloadPng = () => {
+    if (!checkAuthForExport()) return;
+
     const sheetCanvas = sheetCanvasRef.current;
     if (!sheetCanvas) return;
     const a = document.createElement('a');
     a.href = sheetCanvas.toDataURL('image/png');
-    a.download = `Passport_${gridMode}_300DPI_${Date.now()}.png`;
+    a.download = `Passport_${activePreset}_${dpiMode}DPI_Master.png`;
     a.click();
     confetti({ particleCount: 40, spread: 60 });
   };
 
-  const handleDownloadSingleJpeg = () => {
-    const canvas = singlePhotoCanvasRef.current;
-    if (!canvas) return;
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/jpeg', 0.98);
-    a.download = `Passport_Single_35x45mm_${Date.now()}.jpg`;
-    a.click();
-  };
+  /**
+   * Export as Adobe Photoshop (.PSD) with Layer Hierarchy
+   */
+  const handleDownloadPsd = () => {
+    if (!checkAuthForExport()) return;
 
-  // ----------------------------------------------------
-  // 7. DRAGGABLE QUAD PIN MOUSE HANDLERS
-  // ----------------------------------------------------
-  const handleQuadMouseDown = (pinIndex: number) => {
-    setActivePin(pinIndex);
-  };
+    const singleCanvas = singlePhotoCanvasRef.current;
+    const sheetCanvas = sheetCanvasRef.current;
+    if (!singleCanvas || !sheetCanvas) return;
 
-  const handleQuadMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (activePin === null || !canvasContainerRef.current) return;
-    const rect = canvasContainerRef.current.getBoundingClientRect();
-    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const cfg = PRESET_CONFIGS[activePreset];
+    const rows = showAdvancedGrid ? customRows : cfg.rows;
+    const cols = showAdvancedGrid ? customCols : cfg.cols;
 
-    setCropQuad((prev) => {
-      const next = [...prev] as Quadrilateral;
-      next[activePin] = { x: nx, y: ny };
-      return next;
+    let dpi = 300;
+    if (dpiMode === '450') dpi = 450;
+    else if (dpiMode === '600') dpi = 600;
+
+    const pxPerMm = dpi / 25.4;
+    const cardW = singleCanvas.width;
+    const cardH = singleCanvas.height;
+    const gapX = Math.round(spacingMm * pxPerMm);
+    const gapY = Math.round(spacingMm * pxPerMm);
+
+    const totalGridW = cols * cardW + (cols - 1) * gapX;
+    const totalGridH = rows * cardH + (rows - 1) * gapY;
+    const startX = (sheetCanvas.width - totalGridW) / 2;
+    const startY = (sheetCanvas.height - totalGridH) / 2 - 20;
+
+    const photos: PsdPhotoItem[] = [];
+    let count = 1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        photos.push({
+          name: `Photo_${count}`,
+          canvas: singleCanvas,
+          left: startX + c * (cardW + gapX),
+          top: startY + r * (cardH + gapY),
+        });
+        count++;
+      }
+    }
+
+    exportPassportPsd({
+      width: sheetCanvas.width,
+      height: sheetCanvas.height,
+      dpi,
+      photos,
+      filename: `Passport_${activePreset}_${dpiMode}DPI_Layers.psd`,
     });
-  };
 
-  const handleQuadMouseUp = () => {
-    setActivePin(null);
-  };
-
-  // Auto-Center Face / Reset
-  const handleResetQuad = () => {
-    setCropQuad([
-      { x: 0.15, y: 0.1 },
-      { x: 0.85, y: 0.1 },
-      { x: 0.85, y: 0.9 },
-      { x: 0.15, y: 0.9 },
-    ]);
-    setFineRotation(0);
+    confetti({ particleCount: 50, spread: 70 });
   };
 
   return (
-    <div className="w-full flex flex-col xl:flex-row gap-6 p-4 sm:p-6 bg-neutral-950 text-neutral-100 min-h-[calc(100vh-64px)] overflow-x-hidden">
+    <div className="w-full flex flex-col xl:flex-row gap-5 p-3 sm:p-5 bg-neutral-950 text-neutral-100 min-h-[calc(100vh-64px)] select-none">
       {/* ---------------------------------------------------- */}
-      {/* LEFT CONTROL SIDEBAR                                 */}
+      {/* LEFT COLUMN: INTERACTIVE CROP VIEWPORT WITH LOUPE   */}
       {/* ---------------------------------------------------- */}
-      <aside className="w-full xl:w-96 flex flex-col gap-4 shrink-0 bg-neutral-900/90 border border-neutral-800 rounded-2xl p-4 sm:p-5 shadow-xl">
-        <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold">
-              📸
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-white tracking-wide">Passport Photo Studio</h2>
-              <span className="text-[10px] text-cyan-400 font-mono">100% 300 DPI Calibration</span>
-            </div>
-          </div>
-          <span className="text-[10px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 px-2 py-0.5 rounded-full font-bold">
-            PRO STUDIO
+      <div className="w-full xl:w-[460px] flex flex-col gap-3 bg-neutral-900/90 border border-neutral-800 rounded-2xl p-4 shadow-xl">
+        <div className="flex items-center justify-between text-xs text-neutral-400 font-mono">
+          <span className="font-bold text-white flex items-center gap-1.5">
+            <Camera className="w-4 h-4 text-cyan-400" />
+            Interactive Crop Quad
           </span>
+          <span className="text-cyan-400">Drag corners to fit</span>
         </div>
 
-        {/* Input Methods: File Upload & Webcam */}
+        {/* Upload & Webcam Row */}
         <div className="grid grid-cols-2 gap-2">
           <label className="flex items-center justify-center gap-1.5 py-2 px-3 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
             <Upload className="w-3.5 h-3.5 text-cyan-400" />
@@ -752,18 +965,18 @@ export default function PassportStudio() {
             className="flex items-center justify-center gap-1.5 py-2 px-3 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
           >
             <Camera className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Live Webcam</span>
+            <span>Live Camera</span>
           </button>
         </div>
 
-        {/* Webcam Capture Modal */}
+        {/* Live Webcam Modal */}
         {isCameraOpen && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-neutral-900 border border-neutral-700 rounded-2xl p-4 max-w-lg w-full flex flex-col items-center gap-3">
               <div className="w-full flex items-center justify-between">
                 <span className="text-sm font-bold text-white flex items-center gap-2">
                   <Video className="w-4 h-4 text-emerald-400" />
-                  Live Camera Biometric Capture
+                  Live Biometric Camera Capture
                 </span>
                 <button onClick={stopCamera} className="text-neutral-400 hover:text-white">
                   <X className="w-5 h-5" />
@@ -772,10 +985,9 @@ export default function PassportStudio() {
 
               <div className="relative rounded-xl overflow-hidden bg-black w-full aspect-video border border-neutral-800">
                 <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                {/* Center Biometric Oval Guide */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-44 h-56 border-2 border-dashed border-cyan-400/80 rounded-[50%] shadow-[0_0_20px_rgba(6,182,212,0.4)] flex items-center justify-center">
-                    <span className="text-[10px] bg-black/60 text-cyan-300 px-2 py-0.5 rounded font-mono">
+                  <div className="w-44 h-56 border-2 border-dashed border-cyan-400/80 rounded-[50%] flex items-center justify-center">
+                    <span className="text-[10px] bg-black/70 text-cyan-300 px-2 py-0.5 rounded font-mono">
                       Align Face Here
                     </span>
                   </div>
@@ -785,13 +997,13 @@ export default function PassportStudio() {
               <div className="w-full flex gap-3">
                 <button
                   onClick={stopCamera}
-                  className="flex-1 py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 font-semibold rounded-xl text-xs"
+                  className="flex-1 py-2 bg-neutral-800 text-neutral-300 rounded-xl text-xs font-semibold"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={capturePhoto}
-                  className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                  className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5"
                 >
                   <Camera className="w-4 h-4" />
                   Capture Photo
@@ -801,23 +1013,159 @@ export default function PassportStudio() {
           </div>
         )}
 
-        {/* 1-Click Background Color Replacer */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-bold text-neutral-300 flex items-center justify-between">
-            <span>Studio Background Switcher:</span>
-            <span className="text-[10px] text-cyan-400 font-mono">1-Click</span>
-          </label>
+        {/* Main Crop Viewport with Touch Loupe */}
+        <div
+          ref={cropContainerRef}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="relative w-full aspect-[3/4] bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 select-none cursor-crosshair shadow-inner"
+          style={{ touchAction: 'none' }}
+        >
+          {imgUrl && (
+            <img
+              src={imgUrl}
+              alt="Source"
+              className="w-full h-full object-contain pointer-events-none"
+            />
+          )}
+
+          {/* Biometric Oval Guide Overlay */}
+          {showBiometricOval && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div className="w-[66%] h-[72%] border-2 border-cyan-400/80 rounded-[50%] flex flex-col items-center justify-between py-2.5 bg-cyan-500/5">
+                <span className="text-[9px] font-mono text-cyan-200 bg-neutral-950/80 px-1.5 py-0.5 rounded shadow">
+                  Top of Head (75%)
+                </span>
+                <div className="w-full border-t border-dashed border-cyan-400/40" />
+                <span className="text-[9px] font-mono text-cyan-200 bg-neutral-950/80 px-1.5 py-0.5 rounded shadow">
+                  Chin Line (1:1)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Connecting Lines for Crop Polygon */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+            <polygon
+              points={`${cropQuad[0].x * 100}%,${cropQuad[0].y * 100}% ${cropQuad[1].x * 100}%,${cropQuad[1].y * 100}% ${cropQuad[2].x * 100}%,${cropQuad[2].y * 100}% ${cropQuad[3].x * 100}%,${cropQuad[3].y * 100}%`}
+              fill="rgba(6, 182, 212, 0.18)"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeDasharray="4 2"
+            />
+          </svg>
+
+          {/* 4 Corner Draggable Nodes with Hindi Labels (Matching Image 4) */}
+          {[
+            { label: '1. ऊपर-बाएं', idx: 0, x: cropQuad[0].x, y: cropQuad[0].y },
+            { label: '2. ऊपर-दाएं', idx: 1, x: cropQuad[1].x, y: cropQuad[1].y },
+            { label: '3. नीचे-दाएं', idx: 2, x: cropQuad[2].x, y: cropQuad[2].y },
+            { label: '4. नीचे-बाएं', idx: 3, x: cropQuad[3].x, y: cropQuad[3].y },
+          ].map((pin) => (
+            <div
+              key={pin.idx}
+              onMouseDown={(e) => handleMouseDownPin(pin.idx, e)}
+              onTouchStart={(e) => handleTouchStartPin(pin.idx, e)}
+              style={{
+                left: `${pin.x * 100}%`,
+                top: `${pin.y * 100}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+              className="absolute z-30 cursor-grab active:cursor-grabbing flex items-center justify-center p-1 group"
+            >
+              {/* Outer white ring + red center node matching Image 4 */}
+              <div className="w-7 h-7 rounded-full bg-white border-2 border-rose-500 shadow-lg flex items-center justify-center transition-transform hover:scale-125">
+                <div className="w-3 h-3 rounded-full bg-rose-600" />
+              </div>
+              <span className="absolute -bottom-5 whitespace-nowrap text-[9px] bg-neutral-900/90 text-white font-mono px-1 rounded border border-neutral-700 pointer-events-none">
+                {pin.label}
+              </span>
+            </div>
+          ))}
+
+          {/* Real-Time Floating Magnifying Loupe (120px circular glass 70px above drag) */}
+          {activePin !== null && activeTouchPos && (
+            <div
+              style={{
+                left: `${activeTouchPos.x}px`,
+                top: `${Math.max(65, activeTouchPos.y - 75)}px`,
+                transform: 'translate(-50%, -50%)',
+              }}
+              className="absolute pointer-events-none z-50 rounded-full shadow-2xl overflow-hidden border-2 border-white ring-4 ring-rose-500/50 bg-neutral-900"
+            >
+              <canvas ref={loupeCanvasRef} width={120} height={120} className="w-[120px] h-[120px] block" />
+            </div>
+          )}
+        </div>
+
+        {/* Detection Notice Banner */}
+        {detectionNotice && (
+          <div className="p-2.5 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-2 animate-in fade-in">
+            <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span className="font-semibold">{detectionNotice}</span>
+          </div>
+        )}
+
+        {/* Action Buttons: Face Centering, Border Snap, Reset & Rotate */}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <button
+            onClick={handleForceFaceDetect}
+            className="py-2 px-2.5 bg-blue-600/30 hover:bg-blue-600/50 text-cyan-200 border border-blue-500/50 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+            title="Auto-center face with Indian passport 75% head height standard"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+            <span>🎯 Auto Face Center</span>
+          </button>
+
+          <button
+            onClick={handleForceBorderDetect}
+            className="py-2 px-2.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            title="Auto snap to photo/card border"
+          >
+            <Crop className="w-3.5 h-3.5 text-amber-400" />
+            <span>📐 Auto Border Snap</span>
+          </button>
+
+          <button
+            onClick={handleResetCorners}
+            className="py-2 px-2.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Reset Quad</span>
+          </button>
+
+          <button
+            onClick={handleRotate90}
+            className="py-2 px-2.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Rotate 90°</span>
+          </button>
+        </div>
+
+        {/* 1-Click Background Color Selector */}
+        <div className="space-y-1.5 pt-2 border-t border-neutral-800">
+          <div className="flex items-center justify-between text-xs font-bold text-neutral-300">
+            <span className="flex items-center gap-1.5">
+              <Palette className="w-3.5 h-3.5 text-cyan-400" />
+              बैकग्राउंड रंग (Background Color):
+            </span>
+            <span className="text-[10px] text-cyan-400 font-mono">1-क्लिक चेंज</span>
+          </div>
+
           <div className="grid grid-cols-4 gap-1.5">
             {[
-              { id: 'original', name: 'Original', color: 'bg-neutral-800 text-white' },
-              { id: '#ffffff', name: 'Pure White', color: 'bg-white text-black' },
-              { id: '#A4CAED', name: 'Light Blue', color: 'bg-[#A4CAED] text-neutral-900' },
-              { id: '#E2E8F0', name: 'Soft Gray', color: 'bg-[#E2E8F0] text-neutral-900' },
+              { id: 'original', name: 'मूल (Original)', color: 'bg-neutral-800 text-white' },
+              { id: '#ffffff', name: 'सफ़ेद (White)', color: 'bg-white text-black' },
+              { id: '#A4CAED', name: 'आसमानी नीला', color: 'bg-[#A4CAED] text-neutral-900 font-bold' },
+              { id: '#E2E8F0', name: 'हल्का ग्रे', color: 'bg-[#E2E8F0] text-neutral-900' },
             ].map((p) => (
               <button
                 key={p.id}
                 onClick={() => setBgColor(p.id as BgColorPreset)}
-                className={`py-1.5 rounded-lg border text-center font-bold text-[10px] transition-all cursor-pointer ${
+                className={`py-2 rounded-xl border text-center font-bold text-[10px] transition-all cursor-pointer ${
                   bgColor === p.id
                     ? 'ring-2 ring-cyan-400 border-white shadow-md'
                     : 'border-neutral-700 opacity-80 hover:opacity-100'
@@ -829,12 +1177,12 @@ export default function PassportStudio() {
           </div>
         </div>
 
-        {/* Name & DOP Strip (Mandatory for SSC/Police) */}
-        <div className="space-y-2 bg-neutral-950/80 p-3 rounded-xl border border-neutral-800">
-          <label className="flex items-center justify-between font-bold text-xs text-neutral-200 cursor-pointer">
+        {/* Name & DOP Strip (YASH SONTAKE / 23.07.2016) */}
+        <div className="space-y-2 bg-neutral-950 p-2.5 rounded-xl border border-neutral-800 text-xs">
+          <label className="flex items-center justify-between font-bold text-neutral-200 cursor-pointer">
             <span className="flex items-center gap-1.5">
               <FileCheck2 className="w-3.5 h-3.5 text-amber-400" />
-              Name & DOP Strip (Govt Forms)
+              Name & DOP Strip (सरकारी भर्ती):
             </span>
             <input
               type="checkbox"
@@ -845,291 +1193,271 @@ export default function PassportStudio() {
           </label>
 
           {hasDopStrip && (
-            <div className="space-y-1.5 pt-1">
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <input
                 type="text"
                 value={candidateName}
                 onChange={(e) => setCandidateName(e.target.value)}
                 placeholder="CANDIDATE NAME"
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2.5 py-1 text-xs text-white uppercase font-bold focus:border-cyan-500 focus:outline-none"
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-white uppercase font-bold focus:border-cyan-500 focus:outline-none"
               />
               <input
                 type="text"
                 value={dopDate}
                 onChange={(e) => setDopDate(e.target.value)}
-                placeholder="DOP: DD/MM/YYYY"
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2.5 py-1 text-xs text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none"
+                placeholder="DD.MM.YYYY"
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-cyan-300 font-mono focus:border-cyan-500 focus:outline-none"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* RIGHT COLUMN: OUTPUT PREVIEW & PRINT CONTROLS        */}
+      {/* ---------------------------------------------------- */}
+      <div className="flex-1 flex flex-col gap-3 min-w-0">
+        {/* Output Header with Badges matching Image 6 */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-800 pb-2">
+          <h2 className="text-sm font-bold text-white tracking-wide">
+            फाइनल आउटपुट प्रीव्यू ({PRESET_CONFIGS[activePreset].label})
+          </h2>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+            <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 px-2.5 py-0.5 rounded-full font-bold">
+              📁 फाइल साइज़: {outputFileSizeKb} KB
+            </span>
+            <span className="bg-blue-950/80 text-blue-300 border border-blue-800/80 px-2.5 py-0.5 rounded-full font-bold">
+              📐 413 × 531 px (300 DPI)
+            </span>
+            <span className="bg-purple-950/80 text-purple-300 border border-purple-800/80 px-2.5 py-0.5 rounded-full font-bold">
+              कस्टम / प्रिंटेबल शीट (Ultra HD Print)
+            </span>
+          </div>
+        </div>
+
+        {/* Master Sheet Canvas Viewport */}
+        <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-3 flex flex-col items-center justify-center">
+          <div className="w-full max-w-2xl bg-neutral-950 rounded-xl p-2 flex items-center justify-center overflow-auto border border-neutral-800 shadow-inner max-h-[460px]">
+            <canvas
+              ref={sheetCanvasRef}
+              className="max-w-full h-auto object-contain rounded shadow-2xl border border-neutral-700 bg-white"
+              style={{ maxHeight: '420px' }}
+            />
+          </div>
+        </div>
+
+        {/* Checkbox Controls: Dimensions & Target KB (Matching Image 6) */}
+        <div className="bg-neutral-900/80 border border-amber-500/30 rounded-2xl p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold text-amber-300">
+            <span>⚙️ डाउनलोड से पहले चेकबॉक्स द्वारा कंट्रोल करें:</span>
+            <span className="text-[10px] bg-amber-500/20 px-2 py-0.5 rounded font-mono">1-Click</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <label className="flex items-center gap-2 p-2 bg-neutral-950 rounded-xl border border-neutral-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showDimensionsInput}
+                onChange={(e) => setShowDimensionsInput(e.target.checked)}
+                className="rounded bg-neutral-800 border-neutral-700 text-cyan-500"
+              />
+              <span className="text-neutral-200 font-semibold">☑ Dimensions सेट करें</span>
+            </label>
+
+            <label className="flex items-center gap-2 p-2 bg-neutral-950 rounded-xl border border-neutral-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useTargetKb}
+                onChange={(e) => setUseTargetKb(e.target.checked)}
+                className="rounded bg-neutral-800 border-neutral-700 text-cyan-500"
+              />
+              <span className="text-neutral-200 font-semibold">☑ Target KB सेट करें</span>
+            </label>
+          </div>
+
+          {showDimensionsInput && (
+            <div className="grid grid-cols-2 gap-2 p-2 bg-neutral-950 rounded-xl border border-neutral-800 text-xs">
+              <div>
+                <span className="text-neutral-400 block text-[10px]">चौड़ाई (Width mm):</span>
+                <input
+                  type="number"
+                  value={photoWidthMm}
+                  onChange={(e) => setPhotoWidthMm(Number(e.target.value))}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-white font-mono"
+                />
+              </div>
+              <div>
+                <span className="text-neutral-400 block text-[10px]">ऊंचाई (Height mm):</span>
+                <input
+                  type="number"
+                  value={photoHeightMm}
+                  onChange={(e) => setPhotoHeightMm(Number(e.target.value))}
+                  className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-white font-mono"
+                />
+              </div>
+            </div>
+          )}
+
+          {useTargetKb && (
+            <div className="p-2 bg-neutral-950 rounded-xl border border-neutral-800 text-xs flex items-center justify-between">
+              <span className="text-neutral-400">टारगेट फाइल साइज़ (KB):</span>
+              <input
+                type="number"
+                value={targetKb}
+                onChange={(e) => setTargetKb(Number(e.target.value))}
+                className="w-28 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-cyan-300 font-mono text-right"
               />
             </div>
           )}
         </div>
 
-        {/* Paper Sheet & Grid Presets */}
+        {/* Printable Sheet Presets (Matching Image 7) */}
         <div className="space-y-1.5">
-          <label className="text-xs font-bold text-neutral-300 flex items-center justify-between">
-            <span>Paper Sheet & Photo Grid:</span>
-            <span className="text-[10px] text-neutral-400 font-mono">True 300 DPI</span>
-          </label>
+          <span className="text-xs font-bold text-neutral-300 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            फोटो शीट लेआउट (Printable Sheet):
+          </span>
+
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+            {(
+              [
+                '1-online',
+                '4-wallet',
+                '6-4x6',
+                '8-4x6',
+                '12-a4',
+                '16-a4',
+              ] as SheetPresetId[]
+            ).map((id) => {
+              const cfg = PRESET_CONFIGS[id];
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActivePreset(id)}
+                  className={`py-2 px-1 rounded-xl border text-center font-bold text-[10px] transition-all cursor-pointer ${
+                    activePreset === id
+                      ? 'bg-blue-600 text-white border-blue-400 shadow-md'
+                      : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white'
+                  }`}
+                >
+                  {cfg.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Printer HD Resolution Selectors (Matching Image 7) */}
+        <div className="p-3 bg-neutral-900/90 border border-indigo-500/30 rounded-2xl space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold text-indigo-300">
+            <span className="flex items-center gap-1.5">
+              <Printer className="w-3.5 h-3.5" />
+              प्रिंटर HD रिज़ॉल्यूशन (Color Print Quality):
+            </span>
+            <span className="font-mono text-cyan-400">{dpiMode} DPI Standard HD</span>
+          </div>
+
           <div className="grid grid-cols-2 gap-1.5">
             {[
-              { id: '4x6-8', name: '8 Photos (4x6" Sheet)', badge: 'POPULAR' },
-              { id: '4x6-6', name: '6 Photos (4x6" 3mm Gap)', badge: 'STUDIO' },
-              { id: 'a4-32', name: '32 Photos (A4 Sheet)', badge: 'BULK' },
-              { id: 'a4-36', name: '36 Photos (A4 Sheet)', badge: 'MAX' },
-              { id: 'single', name: 'Single (35x45mm)', badge: '1 PC' },
-              { id: 'stamp', name: 'Stamp Size (20x25mm)', badge: 'MINI' },
-            ].map((g) => (
+              { id: '300', title: '300 DPI (Standard HD)', desc: '1200 × 1800 px (4×6)' },
+              { id: '450', title: '450 DPI (Ultra HD)', desc: '1800 × 2700 px (4×6)' },
+              { id: '600', title: '600 DPI (Studio Master 4K)', desc: '2400 × 3600 px (Photo Paper)' },
+              { id: '300-a4', title: 'A4 Sheet HD (300 DPI)', desc: '2480 × 3508 px' },
+            ].map((d) => (
               <button
-                key={g.id}
-                onClick={() => setGridMode(g.id as PassportGridMode)}
+                key={d.id}
+                onClick={() => setDpiMode(d.id as DpiQualityMode)}
                 className={`p-2 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-                  gridMode === g.id
-                    ? 'bg-cyan-500/10 border-cyan-400 text-white shadow-sm'
+                  dpiMode === d.id
+                    ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
                     : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
                 }`}
               >
-                <div className="flex items-center justify-between w-full mb-0.5">
-                  <span className="text-[11px] font-bold text-white">{g.name}</span>
-                  <span className="text-[8px] px-1 py-0.2 bg-neutral-800 text-cyan-300 font-mono rounded">
-                    {g.badge}
-                  </span>
-                </div>
+                <span className="text-xs font-bold">{d.title}</span>
+                <span className="text-[10px] font-mono opacity-80">{d.desc}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* 1-Click Adjustments (Brightness, Contrast, Warmth, Rotation) */}
-        <div className="space-y-2 bg-neutral-950/60 p-3 rounded-xl border border-neutral-800 text-xs">
-          <span className="font-bold text-neutral-300 block mb-1">Canvas 2D Enhancements:</span>
-
-          <div className="flex items-center justify-between">
-            <span className="text-neutral-400 flex items-center gap-1">
-              <Sun className="w-3 h-3 text-amber-400" /> Brightness:
-            </span>
-            <span className="font-mono text-cyan-300">{brightness}%</span>
+        {/* Guest Export Warning / Login CTA */}
+        {!currentUser && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-amber-200">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <b>Login Required:</b> Print & HD Downloads require operator sign-in. (Get 4 Free Prints on Sign Up!)
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                onRequireAuth?.();
+                window.dispatchEvent(new Event('np_trigger_login'));
+              }}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl whitespace-nowrap cursor-pointer text-xs transition-colors"
+            >
+              Sign In to Print
+            </button>
           </div>
-          <input
-            type="range"
-            min="60"
-            max="140"
-            value={brightness}
-            onChange={(e) => setBrightness(Number(e.target.value))}
-            className="w-full accent-cyan-500 cursor-pointer"
-          />
+        )}
 
-          <div className="flex items-center justify-between">
-            <span className="text-neutral-400 flex items-center gap-1">
-              <Contrast className="w-3 h-3 text-cyan-400" /> Contrast:
-            </span>
-            <span className="font-mono text-cyan-300">{contrastVal}%</span>
-          </div>
-          <input
-            type="range"
-            min="60"
-            max="140"
-            value={contrastVal}
-            onChange={(e) => setContrastVal(Number(e.target.value))}
-            className="w-full accent-cyan-500 cursor-pointer"
-          />
+        {/* Prominent Red Download Button (Matching Image 7) */}
+        <button
+          onClick={handleDownloadJpeg}
+          className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-black rounded-2xl text-sm flex items-center justify-center gap-2 shadow-xl shadow-red-600/30 cursor-pointer transition-all active:scale-[0.99]"
+        >
+          {!currentUser ? (
+            <>
+              <Lock className="w-4 h-4 text-amber-300" />
+              <span>🔒 लॉगिन करें और फोटो डाउनलोड करें ({outputFileSizeKb} KB)</span>
+            </>
+          ) : (
+            <>
+              <Download className="w-5 h-5" />
+              <span>📥 पासपोर्ट फोटो डाउनलोड करें ({outputFileSizeKb} KB)</span>
+            </>
+          )}
+        </button>
 
-          <div className="flex items-center justify-between">
-            <span className="text-neutral-400 flex items-center gap-1">
-              <RotateCw className="w-3 h-3 text-emerald-400" /> Fine Tilt Deskew:
-            </span>
-            <span className="font-mono text-cyan-300">{fineRotation}°</span>
-          </div>
-          <input
-            type="range"
-            min="-10"
-            max="10"
-            step="0.5"
-            value={fineRotation}
-            onChange={(e) => setFineRotation(Number(e.target.value))}
-            className="w-full accent-cyan-500 cursor-pointer"
-          />
-
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-neutral-300 font-semibold">Face Edge Sharpening:</span>
-            <input
-              type="checkbox"
-              checked={sharpen}
-              onChange={(e) => setSharpen(e.target.checked)}
-              className="rounded bg-neutral-800 border-neutral-700 text-cyan-500 w-4 h-4 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        {/* Action Buttons: Direct Print & Downloads */}
-        <div className="space-y-2 pt-2 border-t border-neutral-800">
+        {/* Multi-Format Studio Export Bar: Print, PDF, PNG, and Photoshop (.PSD with Layers) */}
+        <div className="grid grid-cols-4 gap-2 pt-1">
           <button
-            onClick={handlePrint}
-            className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-neutral-950 font-black rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer transition-all"
+            onClick={handleDirectPrint}
+            className="py-2 px-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-sm"
+            title="1:1 Exact Scale Direct Print"
           >
-            <Printer className="w-4 h-4" />
-            <span>1-Click Direct Print (1:1 Exact mm)</span>
+            {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-300" /> : <Printer className="w-3.5 h-3.5" />}
+            <span>Direct Print</span>
           </button>
 
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={handleDownloadUltraHd}
-              className="py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-sm"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Full Sheet PNG</span>
-            </button>
-            <button
-              onClick={handleDownloadSingleJpeg}
-              className="py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors"
-            >
-              <Download className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Single 35x45mm</span>
-            </button>
-          </div>
+          <button
+            onClick={handleDownloadPng}
+            className="py-2 px-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-sm"
+            title="Lossless 300 DPI PNG"
+          >
+            {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-300" /> : <Download className="w-3.5 h-3.5" />}
+            <span>Master PNG</span>
+          </button>
+
+          <button
+            onClick={handleDownloadJpeg}
+            className="py-2 px-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors"
+            title="High-Res Print JPEG"
+          >
+            {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-300" /> : <Download className="w-3.5 h-3.5 text-blue-400" />}
+            <span>High-Res JPG</span>
+          </button>
+
+          <button
+            onClick={handleDownloadPsd}
+            className="py-2 px-2 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-600 hover:to-indigo-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors shadow-md shadow-blue-900/30"
+            title="Adobe Photoshop File with Independent Photo Layers"
+          >
+            {!currentUser ? <Lock className="w-3.5 h-3.5 text-amber-300" /> : <ImageIcon className="w-3.5 h-3.5 text-cyan-300" />}
+            <span>Photoshop (.PSD)</span>
+          </button>
         </div>
-      </aside>
-
-      {/* ---------------------------------------------------- */}
-      {/* RIGHT VIEWPORT (ALIGNMENT CROPPER & PRINT PREVIEW)   */}
-      {/* ---------------------------------------------------- */}
-      <main className="flex-1 flex flex-col gap-4 min-w-0">
-        {/* Top Alignment Bar */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-3">
-            <span className="font-bold text-white flex items-center gap-1.5">
-              <Maximize2 className="w-4 h-4 text-cyan-400" />
-              Biometric 70-80% Face Oval Guide
-            </span>
-            <label className="flex items-center gap-1.5 text-neutral-300 cursor-pointer text-[11px]">
-              <input
-                type="checkbox"
-                checked={showBiometricOval}
-                onChange={(e) => setShowBiometricOval(e.target.checked)}
-                className="rounded bg-neutral-800 border-neutral-700 text-cyan-500"
-              />
-              Show Oval Guide
-            </label>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleResetQuad}
-              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
-            >
-              <RefreshCw className="w-3 h-3 text-cyan-400" />
-              Reset Crop
-            </button>
-            <span className="text-neutral-500 font-mono text-[11px]">
-              Standard: 35mm × 45mm (7:9)
-            </span>
-          </div>
-        </div>
-
-        {/* Viewport Grid: Crop Canvas Left & Print Sheet Right */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 items-start">
-          {/* Crop Alignment Canvas (4-Pin Quad) */}
-          <div className="lg:col-span-5 bg-neutral-900/60 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
-            <div className="w-full flex items-center justify-between text-xs text-neutral-400 mb-2 font-mono">
-              <span>Interactive Crop Quad</span>
-              <span>Drag corners to fit</span>
-            </div>
-
-            <div
-              ref={canvasContainerRef}
-              onMouseMove={handleQuadMouseMove}
-              onMouseUp={handleQuadMouseUp}
-              onMouseLeave={handleQuadMouseUp}
-              className="relative w-full max-w-[340px] aspect-[3/4] bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 select-none cursor-crosshair shadow-inner"
-            >
-              {imgUrl && (
-                <img
-                  src={imgUrl}
-                  alt="Original"
-                  className="w-full h-full object-contain pointer-events-none"
-                />
-              )}
-
-              {/* Biometric Oval Guide Overlay */}
-              {showBiometricOval && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-[62%] h-[68%] border-2 border-cyan-400/70 rounded-[50%] flex flex-col items-center justify-between py-2 bg-cyan-500/5">
-                    <span className="text-[8px] font-mono text-cyan-300 bg-neutral-950/80 px-1 rounded">
-                      Top of Head (75%)
-                    </span>
-                    <div className="w-full border-t border-dashed border-cyan-400/40" />
-                    <span className="text-[8px] font-mono text-cyan-300 bg-neutral-950/80 px-1 rounded">
-                      Chin Line (1:1)
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* 4 Interactive Corner Pins */}
-              {cropQuad.map((pt, idx) => (
-                <div
-                  key={idx}
-                  onMouseDown={() => handleQuadMouseDown(idx)}
-                  style={{
-                    left: `${pt.x * 100}%`,
-                    top: `${pt.y * 100}%`,
-                    transform: 'translate(-50%, -50%)',
-                  }}
-                  className={`absolute w-5 h-5 rounded-full border-2 cursor-grab active:cursor-grabbing flex items-center justify-center transition-transform hover:scale-125 z-20 ${
-                    activePin === idx
-                      ? 'bg-cyan-400 border-white ring-4 ring-cyan-500/50'
-                      : 'bg-neutral-950 border-cyan-400 shadow-md'
-                  }`}
-                >
-                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                </div>
-              ))}
-
-              {/* Connecting Lines for Crop Polygon */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                <polygon
-                  points={`${cropQuad[0].x * 100}%,${cropQuad[0].y * 100}% ${cropQuad[1].x * 100}%,${cropQuad[1].y * 100}% ${cropQuad[2].x * 100}%,${cropQuad[2].y * 100}% ${cropQuad[3].x * 100}%,${cropQuad[3].y * 100}%`}
-                  fill="rgba(6, 182, 212, 0.15)"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                  strokeDasharray="4 2"
-                />
-              </svg>
-            </div>
-
-            <div className="mt-3 text-center">
-              <span className="text-[11px] text-neutral-400">
-                Processed Single: 35mm × 45mm (413×531 px at 300 DPI)
-              </span>
-            </div>
-          </div>
-
-          {/* Sheet Print Preview */}
-          <div className="lg:col-span-7 bg-neutral-900/60 border border-neutral-800 rounded-2xl p-4 flex flex-col items-center">
-            <div className="w-full flex items-center justify-between text-xs text-neutral-400 mb-2 font-mono">
-              <span className="font-bold text-white">Print Ready Sheet Preview</span>
-              <span className="text-cyan-400">
-                {gridMode.startsWith('a4') ? 'A4 Paper (210×297 mm)' : '4x6" Glossy (152.4×101.6 mm)'}
-              </span>
-            </div>
-
-            <div className="w-full bg-neutral-950 rounded-xl p-2 flex items-center justify-center overflow-auto border border-neutral-800 shadow-inner max-h-[560px]">
-              <canvas
-                ref={sheetCanvasRef}
-                className="max-w-full h-auto object-contain rounded shadow-lg border border-neutral-700 bg-white"
-                style={{ maxHeight: '520px' }}
-              />
-            </div>
-
-            <div className="w-full mt-3 flex items-center justify-between text-xs text-neutral-400 px-2 font-mono">
-              <span className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Physical 50mm Calibration Bar Included
-              </span>
-              <span>100% 1:1 Scale Output</span>
-            </div>
-          </div>
-        </div>
-      </main>
+      </div>
 
       {/* Hidden single photo canvas buffer */}
       <canvas ref={singlePhotoCanvasRef} className="hidden" />
