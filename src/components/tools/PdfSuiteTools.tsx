@@ -211,6 +211,8 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
   // ---------------------------------------------------------------------------
   // PDF COMPRESSOR HANDLER
   // ---------------------------------------------------------------------------
+  const [compressCanvasRef, setCompressCanvasRef] = useState<HTMLCanvasElement | null>(null);
+
   const handleSelectCompressFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -220,20 +222,80 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
     setCompressOriginalSize(file.size);
     setCompressResultBlob(null);
     setCompressResultSize(null);
-    setIsCompressing(true);
 
     try {
       const buffer = await file.arrayBuffer();
       const { canvas } = await renderPdfToCanvas(buffer, 1, 150);
       setCompressPreviewUrl(canvas.toDataURL('image/jpeg', 0.8));
+      setCompressCanvasRef(canvas);
+    } catch (err: any) {
+      console.error('PDF preview error:', err);
+    }
+  };
 
-      // Calculate compression quality
+  const handleRunPdfCompress = async () => {
+    if (!compressCanvasRef && !compressFile) return;
+    setIsCompressing(true);
+
+    try {
+      let canvas = compressCanvasRef;
+      if (!canvas && compressFile) {
+        const buffer = await compressFile.arrayBuffer();
+        const res = await renderPdfToCanvas(buffer, 1, 150);
+        canvas = res.canvas;
+        setCompressCanvasRef(canvas);
+      }
+      if (!canvas) return;
+
       const targetBytes = compressTargetKb * 1024;
-      const quality = Math.max(0.2, Math.min(0.85, targetBytes / (canvas.width * canvas.height * 0.45)));
+      const toBlob = (c: HTMLCanvasElement, q: number): Promise<Blob> =>
+        new Promise((res) => c.toBlob((b) => res(b || new Blob()), 'image/jpeg', q));
 
-      const blob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/jpeg', quality));
-      setCompressResultBlob(blob);
-      setCompressResultSize(blob.size);
+      let minQ = 0.01;
+      let maxQ = 0.90;
+      let bestBlob: Blob | null = null;
+
+      for (let i = 0; i < 8; i++) {
+        const midQ = (minQ + maxQ) / 2;
+        const b = await toBlob(canvas, midQ);
+        if (b.size <= targetBytes) {
+          bestBlob = b;
+          minQ = midQ;
+        } else {
+          maxQ = midQ;
+        }
+      }
+
+      // If still larger than targetBytes, downscale canvas
+      let curCanvas = canvas;
+      let curW = canvas.width;
+      let curH = canvas.height;
+      while ((!bestBlob || bestBlob.size > targetBytes) && curW > 100 && curH > 100) {
+        curW = Math.max(100, Math.round(curW * 0.8));
+        curH = Math.max(100, Math.round(curH * 0.8));
+        const sc = document.createElement('canvas');
+        sc.width = curW;
+        sc.height = curH;
+        const sCtx = sc.getContext('2d');
+        if (sCtx) {
+          sCtx.drawImage(canvas, 0, 0, curW, curH);
+          curCanvas = sc;
+          for (const testQ of [0.75, 0.5, 0.25, 0.08, 0.02, 0.01]) {
+            const b = await toBlob(curCanvas, testQ);
+            if (b.size <= targetBytes) {
+              bestBlob = b;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!bestBlob || bestBlob.size > targetBytes) {
+        bestBlob = await toBlob(curCanvas, 0.01);
+      }
+
+      setCompressResultBlob(bestBlob);
+      setCompressResultSize(bestBlob.size);
     } catch (err: any) {
       console.error('PDF compress error:', err);
     } finally {
@@ -257,17 +319,31 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
   // ---------------------------------------------------------------------------
   // PDF TO 300 DPI IMAGE EXTRACTION & 1-BY-1 DOWNLOAD HANDLER
   // ---------------------------------------------------------------------------
+  const [pdfPageCountInfo, setPdfPageCountInfo] = useState<number>(0);
+
   const handlePdfToImgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setPdfToImgFile(file);
-    setIsExtractingPdf(true);
     setPdfPagesCanvases([]);
 
     try {
       const buffer = await file.arrayBuffer();
-      // Render first 10 pages for batch extraction at 300 DPI
+      const firstResult = await renderPdfToCanvas(buffer, 1, 100);
+      setPdfPageCountInfo(firstResult.pageCount);
+    } catch (err: any) {
+      console.error('Count error:', err);
+    }
+  };
+
+  const handleRunPdfToImgExtraction = async () => {
+    if (!pdfToImgFile) return;
+    setIsExtractingPdf(true);
+    setPdfPagesCanvases([]);
+
+    try {
+      const buffer = await pdfToImgFile.arrayBuffer();
       const pages: HTMLCanvasElement[] = [];
       const firstResult = await renderPdfToCanvas(buffer, 1, 300);
       pages.push(firstResult.canvas);
@@ -279,6 +355,7 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
       }
 
       setPdfPagesCanvases(pages);
+      confetti({ particleCount: 30, spread: 60 });
     } catch (err: any) {
       console.error('Extraction error:', err);
     } finally {
@@ -471,15 +548,34 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
                 </div>
               )}
 
-              {/* Download Action */}
+              {/* ACTION BUTTON: Compress PDF */}
               <button
-                onClick={handleDownloadCompressedPdf}
-                disabled={!compressResultBlob || isCompressing}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-neutral-950 font-bold rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-cyan-500/20 disabled:opacity-50"
+                onClick={handleRunPdfCompress}
+                disabled={!compressFile || isCompressing}
+                className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-blue-600/30 disabled:opacity-50"
               >
-                <Download className="w-4 h-4" />
-                <span>{isCompressing ? 'Compressing...' : `Download Compressed PDF (<${compressTargetKb} KB)`}</span>
+                {isCompressing ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FileText className="w-4 h-4" />
+                )}
+                <span>{isCompressing ? 'Compressing PDF...' : `⚡ Compress PDF (<${compressTargetKb} KB) (कंप्रेस करें)`}</span>
               </button>
+
+              {/* Download Action: Active ONLY after compression */}
+              {compressResultBlob ? (
+                <button
+                  onClick={handleDownloadCompressedPdf}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 animate-in fade-in"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>📥 Download Compressed PDF ({formatSize(compressResultSize || 0)})</span>
+                </button>
+              ) : (
+                <span className="text-[11px] text-neutral-400 text-center block">
+                  {compressFile ? 'Click "Compress PDF" above to perform compression.' : 'Select a PDF file to begin.'}
+                </span>
+              )}
             </div>
 
             {/* Right Preview */}
@@ -536,7 +632,7 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
 
                 <label className="px-4 py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer">
                   <Upload className="w-4 h-4 text-cyan-400" />
-                  <span>Choose PDF</span>
+                  <span>{pdfToImgFile ? 'Change PDF' : 'Choose PDF'}</span>
                   <input
                     type="file"
                     accept="application/pdf"
@@ -546,6 +642,31 @@ export default function PdfSuiteTools({ defaultTab = 'pdf-compress' }: PdfSuiteT
                 </label>
               </div>
             </div>
+
+            {/* If PDF selected, show Action Button to Extract */}
+            {pdfToImgFile && pdfPagesCanvases.length === 0 && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
+                <div>
+                  <span className="font-bold text-white text-sm block">{pdfToImgFile.name}</span>
+                  <span className="text-xs text-cyan-300 font-mono">
+                    {pdfPageCountInfo > 0 ? `${pdfPageCountInfo} Pages Found` : 'Ready to extract'} · 300 DPI Canvas
+                  </span>
+                </div>
+
+                <button
+                  onClick={handleRunPdfToImgExtraction}
+                  disabled={isExtractingPdf}
+                  className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-black rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer hover:scale-105 disabled:opacity-50"
+                >
+                  {isExtractingPdf ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  <span>{isExtractingPdf ? 'Extracting Pages at 300 DPI...' : '⚡ Extract Pages at 300 DPI (कन्वर्ट करें)'}</span>
+                </button>
+              </div>
+            )}
 
             {/* Extracted Pages Grid */}
             {pdfPagesCanvases.length > 0 && (

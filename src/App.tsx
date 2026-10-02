@@ -107,7 +107,7 @@ export default function App() {
 
   // Helper title for breadcrumb
   const toolTitles: Record<PortalToolId, { name: string; icon: React.ComponentType<{ className?: string }> }> = {
-    'image-reducer': { name: 'Reduce Image Size In KB (Pi7 Style)', icon: Maximize2 },
+    'image-reducer': { name: 'Reduce Image Size In KB (Instant Compress)', icon: Maximize2 },
     'card-engine': { name: 'Ultra-HD ID Card Processor', icon: CreditCard },
     'passport-maker': { name: 'Passport & Visa Photo Grid Maker', icon: Camera },
     'passport-studio': { name: '1-Click Passport Photo Studio (300 DPI)', icon: Camera },

@@ -87,6 +87,9 @@ export default function SignatureEnhancer() {
     img.onload = () => setSourceImage(img);
   };
 
+  const [isEnhanced, setIsEnhanced] = useState<boolean>(true);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -95,7 +98,10 @@ export default function SignatureEnhancer() {
     reader.onload = (event) => {
       const img = new Image();
       img.src = event.target?.result as string;
-      img.onload = () => setSourceImage(img);
+      img.onload = () => {
+        setSourceImage(img);
+        setIsEnhanced(false); // require user to click "Enhance Signature"
+      };
     };
     reader.readAsDataURL(file);
   };
@@ -103,11 +109,15 @@ export default function SignatureEnhancer() {
   // ----------------------------------------------------
   // ENHANCEMENT & BINARIZATION PIPELINE
   // ----------------------------------------------------
-  useEffect(() => {
+  const runEnhancement = () => {
     if (!sourceImage) return;
+    setIsProcessing(true);
 
     const canvas = outputCanvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      setIsProcessing(false);
+      return;
+    }
 
     canvas.width = sourceImage.width;
     canvas.height = sourceImage.height;
@@ -166,7 +176,16 @@ export default function SignatureEnhancer() {
     }
 
     ctx.putImageData(imgData, 0, 0);
-  }, [sourceImage, threshold, contrastBoost, smoothEdges, outputMode]);
+    setIsEnhanced(true);
+    setIsProcessing(false);
+    confetti({ particleCount: 25, spread: 50 });
+  };
+
+  useEffect(() => {
+    if (sourceImage && isEnhanced) {
+      runEnhancement();
+    }
+  }, [threshold, contrastBoost, smoothEdges, outputMode]);
 
   const handleDownload = () => {
     const canvas = outputCanvasRef.current;
@@ -262,6 +281,20 @@ export default function SignatureEnhancer() {
               Increase if ink is too faint; decrease if background shadow appears.
             </span>
           </div>
+
+          {/* Action Button */}
+          <button
+            onClick={runEnhancement}
+            disabled={!sourceImage || isProcessing}
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer hover:scale-105 disabled:opacity-50"
+          >
+            {isProcessing ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4" />
+            )}
+            <span>{isProcessing ? 'Enhancing Signature...' : '✨ Enhance Signature (एन्हैंस करें)'}</span>
+          </button>
         </div>
       </aside>
 
@@ -273,13 +306,26 @@ export default function SignatureEnhancer() {
             Enhanced Signature · Camera Shadows & Yellow Paper Eliminated
           </span>
 
-          <button
-            onClick={handleDownload}
-            className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download Clean Signature</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {!isEnhanced && (
+              <button
+                onClick={runEnhancement}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Enhance Now</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleDownload}
+              disabled={!isEnhanced}
+              className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-neutral-950 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Clean Signature</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 p-6 flex flex-col lg:flex-row items-center justify-center gap-8 overflow-auto">

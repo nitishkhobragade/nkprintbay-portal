@@ -109,38 +109,50 @@ export default function MasterBatchCompressor({ initialMode = 'all' }: MasterBat
 
     setItems((prev) => [...prev, ...newItems]);
 
-    // Process thumbnails and initial compression asynchronously
+    // Process thumbnails asynchronously and mark pending
     for (const item of newItems) {
-      generateThumbnailAndCompress(item);
+      generateThumbnailOnly(item);
     }
   };
 
-  const generateThumbnailAndCompress = async (item: BatchItem) => {
+  const generateThumbnailOnly = async (item: BatchItem) => {
     try {
       let thumbUrl = '';
       if (item.type === 'image') {
         thumbUrl = URL.createObjectURL(item.file);
       } else {
-        // Render first page of PDF as thumbnail
         try {
           const buffer = await item.file.arrayBuffer();
           const { canvas } = await renderPdfToCanvas(buffer, 1, 150);
           thumbUrl = canvas.toDataURL('image/jpeg', 0.7);
         } catch {
-          thumbUrl = ''; // Fallback to icon
+          thumbUrl = '';
         }
       }
 
       setItems((prev) =>
-        prev.map((it) => (it.id === item.id ? { ...it, thumbnailUrl: thumbUrl, status: 'processing' } : it))
+        prev.map((it) => (it.id === item.id ? { ...it, thumbnailUrl: thumbUrl, status: 'pending' } : it))
       );
+    } catch {
+      setItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, status: 'pending' } : it))
+      );
+    }
+  };
 
-      // Run compression to hit targetKb
+  const handleCompressItem = async (itemId: string) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, status: 'processing' } : it))
+    );
+
+    try {
       const compressed = await compressSingleItem(item.file, item.type, item.targetKb);
-
       setItems((prev) =>
         prev.map((it) =>
-          it.id === item.id
+          it.id === itemId
             ? {
                 ...it,
                 compressedBlob: compressed.blob,
@@ -153,10 +165,20 @@ export default function MasterBatchCompressor({ initialMode = 'all' }: MasterBat
     } catch (err: any) {
       setItems((prev) =>
         prev.map((it) =>
-          it.id === item.id ? { ...it, status: 'error', errorMessage: err.message || 'Compression failed' } : it
+          it.id === itemId ? { ...it, status: 'error', errorMessage: err.message || 'Failed' } : it
         )
       );
     }
+  };
+
+  const handleCompressAllPending = async () => {
+    const pendingItems = items.filter((it) => it.status === 'pending' || it.status === 'error');
+    if (pendingItems.length === 0) return;
+
+    for (const item of pendingItems) {
+      await handleCompressItem(item.id);
+    }
+    confetti({ particleCount: 35, spread: 60 });
   };
 
   // ---------------------------------------------------------------------------
@@ -487,18 +509,30 @@ export default function MasterBatchCompressor({ initialMode = 'all' }: MasterBat
           </label>
 
           {items.length > 0 && (
-            <button
-              onClick={handleMasterDownloadSequential}
-              disabled={isDownloadingAll || items.every((it) => it.status !== 'ready')}
-              className="px-5 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-neutral-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer disabled:opacity-50"
-            >
-              <Download className="w-4 h-4" />
-              <span>
-                {isDownloadingAll
-                  ? `Downloading ${downloadProgress?.current}/${downloadProgress?.total}...`
-                  : `Master Download All (${items.filter((it) => it.status === 'ready').length})`}
-              </span>
-            </button>
+            <>
+              {/* Action Button: User must click this button to perform batch compression */}
+              <button
+                onClick={handleCompressAllPending}
+                disabled={items.every((it) => it.status === 'ready' || it.status === 'processing')}
+                className="px-4 py-2 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>⚡ Compress All Files ({items.filter((it) => it.status === 'pending').length} Pending)</span>
+              </button>
+
+              <button
+                onClick={handleMasterDownloadSequential}
+                disabled={isDownloadingAll || items.every((it) => it.status !== 'ready')}
+                className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                <span>
+                  {isDownloadingAll
+                    ? `Downloading ${downloadProgress?.current}/${downloadProgress?.total}...`
+                    : `📥 Download All Ready (${items.filter((it) => it.status === 'ready').length})`}
+                </span>
+              </button>
+            </>
           )}
         </div>
       </div>

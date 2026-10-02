@@ -226,12 +226,15 @@ export default function GovtResizer() {
     };
   };
 
+  const [hasProcessed, setHasProcessed] = useState<boolean>(true);
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setSourceFileSize(file.size);
     setSourceFileName(file.name);
+    setHasProcessed(false); // require action button click
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -248,7 +251,7 @@ export default function GovtResizer() {
   // INTELLIGENT BINARY SEARCH COMPRESSION ENGINE
   // Compresses canvas iteratively to hit target KB window
   // ----------------------------------------------------
-  useEffect(() => {
+  const runResizeAction = () => {
     if (!sourceImage) return;
 
     setIsProcessing(true);
@@ -280,7 +283,7 @@ export default function GovtResizer() {
     ctx.drawImage(sourceImage, sX, sY, sW, sH);
 
     // Iterative binary search for JPEG quality
-    let minQuality = 0.05;
+    let minQuality = 0.01;
     let maxQuality = 0.98;
     let bestQuality = 0.85;
     let bestDataUrl = '';
@@ -293,7 +296,6 @@ export default function GovtResizer() {
     for (let iter = 0; iter < 10; iter++) {
       const q = (minQuality + maxQuality) / 2;
       const dataUrl = canvas.toDataURL(format, q);
-      // Rough base64 to byte length: (length * 3/4) - padding
       const sizeBytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
 
       bestDataUrl = dataUrl;
@@ -317,11 +319,31 @@ export default function GovtResizer() {
       }
     }
 
+    // STRICT GUARANTEE: Never exceed targetMaxKb
+    if (bestSize > targetBytesMax) {
+      for (const lowQ of [0.5, 0.3, 0.15, 0.05, 0.01]) {
+        const dataUrl = canvas.toDataURL(format, lowQ);
+        const sizeBytes = Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+        bestDataUrl = dataUrl;
+        bestSize = sizeBytes;
+        bestQuality = lowQ;
+        if (sizeBytes <= targetBytesMax) break;
+      }
+    }
+
     setCompressedDataUrl(bestDataUrl);
     setCompressedFileSize(bestSize);
     setCompressionQuality(bestQuality);
     setIsProcessing(false);
-  }, [sourceImage, targetWidth, targetHeight, targetMinKb, targetMaxKb, format]);
+    setHasProcessed(true);
+    confetti({ particleCount: 25, spread: 50 });
+  };
+
+  useEffect(() => {
+    if (sourceImage && hasProcessed) {
+      runResizeAction();
+    }
+  }, [targetWidth, targetHeight, targetMinKb, targetMaxKb, format]);
 
   // Download Output
   const handleDownload = () => {
@@ -472,6 +494,20 @@ export default function GovtResizer() {
               />
             </div>
           </div>
+
+          {/* Action Button: User must click this button to perform resize */}
+          <button
+            onClick={runResizeAction}
+            disabled={!sourceImage || isProcessing}
+            className="w-full mt-2 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer hover:scale-105 disabled:opacity-50"
+          >
+            {isProcessing ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <FileCheck2 className="w-4 h-4" />
+            )}
+            <span>{isProcessing ? 'Resizing Image...' : `⚡ Resize Image to ${targetMinKb}-${targetMaxKb} KB (रिसाइज करें)`}</span>
+          </button>
         </div>
       </aside>
 
@@ -491,14 +527,26 @@ export default function GovtResizer() {
             </span>
           </div>
 
-          <button
-            onClick={handleDownload}
-            disabled={!compressedDataUrl}
-            className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-neutral-950 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download {Math.round(compressedFileSize / 1024)} KB File</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {!hasProcessed && (
+              <button
+                onClick={runResizeAction}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Resize Now</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleDownload}
+              disabled={!hasProcessed || !compressedDataUrl}
+              className="px-4 py-1.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-neutral-950 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download {Math.round(compressedFileSize / 1024)} KB File</span>
+            </button>
+          </div>
         </div>
 
         {/* Compression Comparison Cards */}

@@ -45,6 +45,7 @@ import {
 import MasterTestingHUD from './MasterTestingHUD';
 import Header from './Header';
 import Footer from './Footer';
+import HelpAndSupportModal from './HelpAndSupportModal';
 import { formatDDMMYYYY } from '../lib/dateUtils';
 
 interface AuthAndAccessGuardProps {
@@ -66,6 +67,7 @@ export default function AuthAndAccessGuard({
   const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [showSwitchUserModal, setShowSwitchUserModal] = useState<boolean>(false);
   const [showMasterHUD, setShowMasterHUD] = useState<boolean>(false);
+  const [showSupportModal, setShowSupportModal] = useState<boolean>(false);
 
   // Authentication & Registration Modal State
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
@@ -214,8 +216,8 @@ export default function AuthAndAccessGuard({
         let adminUser = users.find((u) => u.email.toLowerCase() === 'djnitish97@gmail.com');
         if (!adminUser) {
           adminUser = {
-            _id: 'usr_admin_nitish',
-            name: 'Nitish Khobragade (Admin)',
+            _id: 'usr_admin_master',
+            name: 'Super Admin (Counter)',
             email: 'djnitish97@gmail.com',
             phone: '+91 99000 00001',
             role: 'admin',
@@ -393,8 +395,13 @@ export default function AuthAndAccessGuard({
       setShowRegisterModal(true);
     };
 
+    const handleTriggerSupport = () => {
+      setShowSupportModal(true);
+    };
+
     window.addEventListener('np_trigger_login', handleTriggerLogin);
     window.addEventListener('np_trigger_register', handleTriggerRegister);
+    window.addEventListener('np_trigger_support', handleTriggerSupport);
 
     // Heartbeat check every 2 seconds
     const interval = setInterval(validateSession, 2000);
@@ -405,6 +412,7 @@ export default function AuthAndAccessGuard({
       window.removeEventListener('np_session_updated', handleStorageChange);
       window.removeEventListener('np_trigger_login', handleTriggerLogin);
       window.removeEventListener('np_trigger_register', handleTriggerRegister);
+      window.removeEventListener('np_trigger_support', handleTriggerSupport);
       clearInterval(interval);
     };
   }, []);
@@ -550,6 +558,7 @@ export default function AuthAndAccessGuard({
         }}
         onOpenPricing={onOpenPricing}
         onOpenAdmin={onOpenAdminPortal}
+        onOpenSupport={() => setShowSupportModal(true)}
         onLogout={handleHardLogout}
         onToggleMasterHUD={() => setShowMasterHUD(!showMasterHUD)}
         isMasterHUDOpen={showMasterHUD}
@@ -1096,6 +1105,12 @@ export default function AuthAndAccessGuard({
       {/* GLOBAL FOOTER (MATCHING NTECHBAY-LIBRARY)            */}
       {/* ---------------------------------------------------- */}
       <Footer />
+
+      {/* Help & Support Modal */}
+      <HelpAndSupportModal
+        isOpen={showSupportModal}
+        onClose={() => setShowSupportModal(false)}
+      />
 
       {/* ---------------------------------------------------- */}
       {/* MASTER USER TESTING HUD (ADMIN ONLY)                 */}

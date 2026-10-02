@@ -33,8 +33,8 @@ const STORAGE_SESSION_KEY = 'np_active_session_data';
 // Initial pre-seeded users (Includes Admin credentials requested by user)
 export const SEED_USERS: AdminUserData[] = [
   {
-    _id: 'usr_admin_nitish',
-    name: 'Nitish Khobragade (Admin)',
+    _id: 'usr_admin_master',
+    name: 'Super Admin (Counter)',
     email: 'djnitish97@gmail.com',
     phone: '+91 99000 00001',
     role: 'admin',
@@ -42,7 +42,7 @@ export const SEED_USERS: AdminUserData[] = [
     effectiveStatus: 'active',
     planName: 'Super Admin Lifetime License',
     planExpiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(),
-    currentSessionToken: 'sess_admin_master_token_nitish',
+    currentSessionToken: 'sess_admin_master_token',
     isSessionActive: true,
     daysRemaining: 3650,
     createdAt: new Date().toISOString(),
@@ -112,7 +112,7 @@ export function getStoredUsers(): AdminUserData[] {
       users[adminIdx].role = 'admin';
       users[adminIdx].planStatus = 'active';
       users[adminIdx].effectiveStatus = 'active';
-      users[adminIdx].name = 'Nitish Khobragade (Admin)';
+      users[adminIdx].name = 'Super Admin (Counter)';
       localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
     }
   }

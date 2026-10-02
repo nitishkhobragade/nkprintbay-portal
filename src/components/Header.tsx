@@ -20,7 +20,8 @@ import {
   UserCog,
   Bell,
   X,
-  Sparkles
+  Sparkles,
+  Headphones
 } from 'lucide-react';
 import { SessionUser } from '../lib/authStore';
 
@@ -30,6 +31,7 @@ export interface HeaderProps {
   onOpenRegister: () => void;
   onOpenPricing?: () => void;
   onOpenAdmin?: () => void;
+  onOpenSupport?: () => void;
   onLogout: () => void;
   onToggleMasterHUD?: () => void;
   isMasterHUDOpen?: boolean;
@@ -41,6 +43,7 @@ export default function Header({
   onOpenRegister,
   onOpenPricing,
   onOpenAdmin,
+  onOpenSupport,
   onLogout,
   onToggleMasterHUD,
   isMasterHUDOpen,
@@ -49,70 +52,81 @@ export default function Header({
 
   return (
     <>
-      <header className="no-print w-full bg-[#0a1b42]/90 backdrop-blur-md border-b border-blue-900/60 px-4 sm:px-8 py-3 flex items-center justify-between gap-4 sticky top-0 z-40 shadow-lg shadow-blue-950/40">
-        {/* Left Branding */}
-        <div className="flex items-center gap-3">
+      <header className="no-print w-full bg-[#0a1b42]/95 backdrop-blur-md border-b border-blue-900/60 px-2 sm:px-4 py-1 sm:py-1.5 flex items-center justify-between gap-1.5 sm:gap-3 sticky top-0 z-40 shadow-md">
+        {/* Left Branding: Single Red-Black 'N' Logo */}
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
           <a
             href="/"
-            className="flex items-center gap-2.5 group cursor-pointer"
+            className="flex items-center gap-1.5 sm:gap-2 group cursor-pointer min-w-0"
           >
-            <div className="w-9 h-9 rounded-xl overflow-hidden bg-gradient-to-tr from-blue-700 to-cyan-500 p-0.5 shadow-md group-hover:scale-105 transition-transform flex items-center justify-center">
+            {/* ONLY Red-Black N Logo, No White N */}
+            <div className="w-6 h-6 sm:w-7.5 sm:h-7.5 rounded-lg overflow-hidden bg-slate-900 border border-blue-700/60 shadow-md group-hover:scale-105 transition-transform flex items-center justify-center shrink-0 p-0.5">
               <img
                 src="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png"
                 alt="NK Logo"
-                className="w-full h-full object-cover rounded-[10px]"
-                onError={(e) => {
-                  // Fallback letter if image is blocked
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
+                className="w-full h-full object-contain"
               />
-              <span className="font-black text-white text-base leading-none">N</span>
             </div>
 
-            <div className="flex flex-col">
-              <span className="font-extrabold text-white text-base sm:text-lg tracking-tight group-hover:text-cyan-300 transition-colors">
+            <div className="flex flex-col min-w-0 justify-center">
+              <span className="font-black text-white text-xs sm:text-sm tracking-tight group-hover:text-cyan-300 transition-colors leading-none truncate">
                 NK PrintBay
               </span>
-              <span className="text-[10px] text-cyan-300/80 font-mono -mt-0.5">
+              <span className="hidden sm:block text-[8px] sm:text-[9px] text-cyan-300/80 font-mono leading-none mt-0.5 truncate">
                 Cyber Cafe & Studio Utility
               </span>
             </div>
           </a>
 
-          <div className="hidden lg:flex items-center gap-1.5 ml-4 px-2.5 py-1 rounded-full bg-blue-900/40 border border-blue-700/50 text-[11px] text-blue-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>True 300 DPI Engine · Epson L8050</span>
+          <div className="hidden xl:flex items-center gap-1 ml-1.5 px-2 py-0.5 rounded-full bg-blue-900/40 border border-blue-700/50 text-[9px] text-blue-200 leading-none">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>True 300 DPI · Epson L8050</span>
           </div>
         </div>
 
         {/* Right Navigation & Auth Buttons */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Security Verified Icon Badge (Matching ntechbay-library) */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          {/* Security Verified Icon Badge (Desktop only) */}
           <button
             title="100% Client-Side Verified · No Server Upload"
-            className="w-8 h-8 rounded-full bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/60 text-cyan-400 flex items-center justify-center transition-colors cursor-pointer"
+            className="hidden lg:flex w-6.5 h-6.5 rounded-full bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/60 text-cyan-400 items-center justify-center transition-colors cursor-pointer"
           >
-            <ShieldCheck className="w-4 h-4" />
+            <ShieldCheck className="w-3.5 h-3.5" />
           </button>
 
-          {/* Notice Button */}
+          {/* Help & Support Button */}
+          <button
+            onClick={() => {
+              if (onOpenSupport) {
+                onOpenSupport();
+              } else {
+                window.dispatchEvent(new Event('np_trigger_support'));
+              }
+            }}
+            className="px-2 sm:px-2.5 py-1 rounded-full bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/60 text-cyan-300 text-[10px] sm:text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+            title="Help & Support Desk (djnitish97@gmail.com)"
+          >
+            <Headphones className="w-3 h-3 text-cyan-400 shrink-0" />
+            <span className="hidden xs:inline sm:inline">Support</span>
+          </button>
+
+          {/* Notice Button (hidden on mobile) */}
           <button
             onClick={() => setShowNoticeModal(true)}
-            className="px-3 py-1.5 rounded-full bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 text-blue-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="hidden sm:flex px-2 sm:px-2.5 py-1 rounded-full bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 text-blue-200 text-xs font-semibold items-center gap-1 transition-colors cursor-pointer shrink-0"
           >
-            <Mail className="w-3.5 h-3.5 text-cyan-300" />
-            <span className="hidden sm:inline">Notice</span>
+            <Mail className="w-3 h-3 text-cyan-300" />
+            <span>Notice</span>
           </button>
 
-          {/* Pricing Button */}
+          {/* Pricing Button (hidden on mobile) */}
           {onOpenPricing && (
             <button
               onClick={onOpenPricing}
-              className="px-3 py-1.5 rounded-full bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/60 text-cyan-300 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="hidden md:flex px-2.5 py-1 rounded-full bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/60 text-cyan-300 text-xs font-semibold items-center gap-1 transition-colors cursor-pointer shrink-0"
             >
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden md:inline">Plans (₹29/₹199)</span>
-              <span className="md:hidden">Plans</span>
+              <Zap className="w-3 h-3 text-amber-400" />
+              <span>Plans</span>
             </button>
           )}
 
@@ -124,23 +138,23 @@ export default function Header({
                   {onToggleMasterHUD && (
                     <button
                       onClick={onToggleMasterHUD}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                      className={`hidden sm:flex px-2 py-0.5 rounded-full text-[11px] font-bold border transition-all cursor-pointer items-center gap-1 shrink-0 ${
                         isMasterHUDOpen
                           ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md'
                           : 'bg-blue-900/50 text-cyan-300 border-blue-700'
                       }`}
                     >
-                      <UserCog className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Master Mode</span>
+                      <UserCog className="w-3 h-3" />
+                      <span>HUD</span>
                     </button>
                   )}
 
                   {onOpenAdmin && (
                     <button
                       onClick={onOpenAdmin}
-                      className="px-3.5 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 text-xs font-extrabold flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
+                      className="px-2 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 text-[11px] font-extrabold flex items-center gap-1 shadow-sm transition-colors cursor-pointer shrink-0"
                     >
-                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <ShieldCheck className="w-3 h-3" />
                       <span>Admin</span>
                     </button>
                   )}
@@ -148,40 +162,39 @@ export default function Header({
               )}
 
               {/* User Identity Pill */}
-              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 bg-blue-950/80 border border-blue-800 rounded-full text-xs text-white">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="font-semibold max-w-[120px] truncate">{currentUser.name}</span>
-                <span className="text-[10px] text-cyan-300 font-mono">({currentUser.daysRemaining}D)</span>
+              <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 bg-blue-950/80 border border-blue-800 rounded-full text-[11px] text-white shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span className="font-semibold max-w-[80px] truncate">{currentUser.name}</span>
               </div>
 
               {/* Logout Button */}
               <button
                 onClick={onLogout}
-                className="px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-2 sm:px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[10px] sm:text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shrink-0"
                 title="Sign Out"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Log Out</span>
+                <LogOut className="w-3 h-3" />
+                <span className="hidden sm:inline">Log Out</span>
               </button>
             </>
           ) : (
-            /* Guest State (Matching ntechbay-library) */
+            /* Guest State */
             <>
-              {/* Sign In Pill Button (White button with blue text) */}
+              {/* Sign In Pill Button */}
               <button
                 onClick={onOpenSignIn}
-                className="px-4 py-1.5 rounded-full bg-white hover:bg-slate-100 text-[#0c2461] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-md transition-all cursor-pointer hover:shadow-cyan-500/20"
+                className="px-2 sm:px-3 py-1 rounded-full bg-white hover:bg-slate-100 text-[#0c2461] font-bold text-[11px] sm:text-xs flex items-center gap-1 shadow-sm transition-all cursor-pointer shrink-0 whitespace-nowrap"
               >
-                <LogIn className="w-3.5 h-3.5 text-blue-600" />
+                <LogIn className="w-3 h-3 text-blue-600" />
                 <span>Sign In</span>
               </button>
 
-              {/* Register Pill Button (Blue pill button) */}
+              {/* Register Pill Button */}
               <button
                 onClick={onOpenRegister}
-                className="px-4 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-all cursor-pointer"
+                className="px-2 sm:px-3 py-1 rounded-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] sm:text-xs flex items-center gap-1 shadow-sm shadow-blue-600/30 transition-all cursor-pointer shrink-0 whitespace-nowrap"
               >
-                <UserPlus className="w-3.5 h-3.5" />
+                <UserPlus className="w-3 h-3" />
                 <span>Register</span>
               </button>
             </>

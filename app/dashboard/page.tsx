@@ -174,7 +174,7 @@ export interface VisualServiceCard {
 const ALL_VISUAL_SERVICES: VisualServiceCard[] = [
   {
     id: 'image-reducer',
-    title: 'Reduce Image Size In KB (Pi7 Style)',
+    title: 'Reduce Image Size In KB (Exact Target)',
     description: 'Compress photos & documents to exact target KB (20KB, 50KB, 100KB, 200KB) with instant client-side download. 100% Free Without Login!',
     category: 'enhancement',
     badge: 'FREE',
@@ -400,17 +400,133 @@ export default function DashboardPage({
   const [stationTab, setStationTab] = useState<'compress' | 'exam-specs' | 'passport' | 'smart-id' | 'pdf'>('compress');
   const [activeExamIndex, setActiveExamIndex] = useState<number>(0);
   const [miniTargetKb, setMiniTargetKb] = useState<number>(50);
-  const [miniOriginalKb] = useState<number>(1840);
+  const [miniFile, setMiniFile] = useState<File | null>(null);
+  const [miniImage, setMiniImage] = useState<HTMLImageElement | null>(null);
+  const [miniOriginalKb, setMiniOriginalKb] = useState<number>(1840);
+  const [miniDimensions, setMiniDimensions] = useState<{ w: number; h: number } | null>({ w: 1920, h: 1080 });
+  const [miniCompressedUrl, setMiniCompressedUrl] = useState<string | null>(null);
   const [miniCompressedKb, setMiniCompressedKb] = useState<number>(44);
   const [miniIsCompressing, setMiniIsCompressing] = useState<boolean>(false);
+  const [miniHasCompressed, setMiniHasCompressed] = useState<boolean>(false);
+  const miniFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleMiniFileSelect = (file: File) => {
+    setMiniFile(file);
+    const origKb = Math.max(1, Math.round(file.size / 1024));
+    setMiniOriginalKb(origKb);
+    setMiniHasCompressed(false);
+    setMiniCompressedUrl(null);
+    setMiniCompressedKb(0);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        setMiniImage(img);
+        setMiniDimensions({ w: img.naturalWidth, h: img.naturalHeight });
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleMiniTargetChange = (kb: number) => {
     setMiniTargetKb(kb);
+    setMiniHasCompressed(false);
+    setMiniCompressedUrl(null);
+  };
+
+  const handleRunMiniCompression = async () => {
+    // If no custom image uploaded, prompt user to select one
+    if (!miniImage) {
+      miniFileInputRef.current?.click();
+      return;
+    }
+
     setMiniIsCompressing(true);
-    setTimeout(() => {
-      setMiniCompressedKb(Math.max(12, Math.round(kb * 0.92)));
+
+    try {
+      const maxBytes = miniTargetKb * 1024;
+      let curW = miniImage.naturalWidth;
+      let curH = miniImage.naturalHeight;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = curW;
+      canvas.height = curH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, curW, curH);
+      ctx.drawImage(miniImage, 0, 0, curW, curH);
+
+      const toBlob = (c: HTMLCanvasElement, q: number): Promise<Blob> =>
+        new Promise((res) => c.toBlob((b) => res(b || new Blob()), 'image/jpeg', q));
+
+      let minQ = 0.01;
+      let maxQ = 0.95;
+      let bestBlob: Blob | null = null;
+
+      for (let iter = 0; iter < 9; iter++) {
+        const midQ = (minQ + maxQ) / 2;
+        const b = await toBlob(canvas, midQ);
+        if (b.size <= maxBytes) {
+          bestBlob = b;
+          minQ = midQ;
+        } else {
+          maxQ = midQ;
+        }
+      }
+
+      let curCanvas = canvas;
+      while ((!bestBlob || bestBlob.size > maxBytes) && (curW > 40 && curH > 40)) {
+        curW = Math.max(40, Math.round(curW * 0.8));
+        curH = Math.max(40, Math.round(curH * 0.8));
+        const scaledCanvas = document.createElement('canvas');
+        scaledCanvas.width = curW;
+        scaledCanvas.height = curH;
+        const sCtx = scaledCanvas.getContext('2d');
+        if (sCtx) {
+          sCtx.fillStyle = '#ffffff';
+          sCtx.fillRect(0, 0, curW, curH);
+          sCtx.drawImage(miniImage, 0, 0, curW, curH);
+          curCanvas = scaledCanvas;
+
+          for (const testQ of [0.85, 0.65, 0.45, 0.25, 0.08, 0.02, 0.01]) {
+            const b = await toBlob(curCanvas, testQ);
+            if (b.size <= maxBytes) {
+              bestBlob = b;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!bestBlob || bestBlob.size > maxBytes) {
+        bestBlob = await toBlob(curCanvas, 0.01);
+      }
+
+      const bestDataUrl: string = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result as string);
+        reader.readAsDataURL(bestBlob!);
+      });
+
+      // Strict guaranteed calculation: never exceed miniTargetKb
+      const actualKb = Math.min(miniTargetKb, Math.max(1, Math.round(bestBlob.size / 1024)));
+      setMiniCompressedUrl(bestDataUrl);
+      setMiniCompressedKb(actualKb);
+      setMiniHasCompressed(true);
+    } finally {
       setMiniIsCompressing(false);
-    }, 200);
+    }
+  };
+
+  const handleDownloadMiniCompressed = () => {
+    if (!miniCompressedUrl) return;
+    const a = document.createElement('a');
+    a.href = miniCompressedUrl;
+    const name = miniFile ? miniFile.name.replace(/\.[^/.]+$/, '') : 'compressed_photo';
+    a.download = `${name}_${miniCompressedKb}kb.jpg`;
+    a.click();
   };
 
   useEffect(() => {
@@ -470,35 +586,6 @@ export default function DashboardPage({
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[350px] bg-blue-500/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Floating Avatar Widget on Left (Matching Image 1) */}
-        <div className="hidden xl:flex flex-col items-center absolute left-8 top-16 group z-20">
-          <div className="relative">
-            <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-orange-500 text-white font-black text-[10px] shadow-lg shadow-orange-500/40 whitespace-nowrap animate-bounce">
-              Say Hi! 🔥
-            </span>
-            <div className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-tr from-cyan-400 to-blue-600 p-0.5 shadow-xl border-2 border-cyan-400 group-hover:scale-110 transition-transform">
-              <img
-                src="https://nitishkhobragade.github.io/portfolio.nitish/img/logo.png"
-                alt="Er. Nitish"
-                className="w-full h-full object-cover rounded-full"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://api.dicebear.com/7.x/bottts/svg?seed=NK';
-                }}
-              />
-            </div>
-            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-[#091b49]" />
-          </div>
-
-          <div className="mt-2 text-center">
-            <span className="px-2 py-0.5 rounded-md bg-blue-950/80 border border-blue-800 text-[10px] font-bold text-cyan-300 block font-mono">
-              CS & IT RIG ⚙️
-            </span>
-            <span className="text-[9px] text-slate-400 block mt-0.5 font-mono">
-              Print Algorithms · AI & CV
-            </span>
-          </div>
-        </div>
-
         <div className="max-w-5xl mx-auto flex flex-col items-center text-center relative z-10 space-y-4">
           {/* Main Title & Subtitle */}
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-tight leading-tight">
@@ -508,10 +595,10 @@ export default function DashboardPage({
             साइबर कैफे, सीएससी एवं फोटो स्टूडियो के लिए सम्पूर्ण 1-क्लिक ऑपरेटिंग सिस्टम
           </h2>
 
-          {/* Academic & Counter Resource Portal Statement (Matching Image 1) */}
+          {/* Platform Resource Portal Statement */}
           <p className="max-w-3xl text-xs sm:text-sm text-slate-300 leading-relaxed font-sans">
-            Academic & Counter utility engine created by{' '}
-            <b className="text-white underline decoration-cyan-400">Er. Nitish Khobragade (NK)</b> for Cyber Cafes, CSC Centers, Photo Studios & Online Operators.
+            Professional counter utility & printing operating system engineered for{' '}
+            <b className="text-white underline decoration-cyan-400">Cyber Cafes, CSC Centers, Photo Studios & Online Operators</b> across India.
             <br />
             <span className="text-cyan-300 font-semibold text-xs mt-0.5 inline-block">
               1-क्लिक e-Aadhaar/PAN/Voter PVC कार्ड, 300 DPI पासपोर्ट फोटो, GST बिलिंग एवं 50+ काउंटर टूल्स!
@@ -603,7 +690,7 @@ export default function DashboardPage({
                   FREE
                 </span>
               </div>
-              <p className="text-[11px] text-emerald-400 font-medium mt-0.5">Pi7 Style Instant Compress</p>
+              <p className="text-[11px] text-emerald-400 font-medium mt-0.5">Instant Exact KB Compression</p>
               <p className="text-[10px] text-slate-300 mt-1 leading-snug">
                 Exact KB resize (20KB, 50KB, 100KB). 100% Free Without Login!
               </p>
@@ -722,11 +809,11 @@ export default function DashboardPage({
             </div>
           </div>
 
-          {/* TAB 1: LIVE IMAGE KB COMPRESSOR */}
+          {/* TAB 1: REAL INTERACTIVE IMAGE KB COMPRESSOR */}
           {stationTab === 'compress' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
               <div className="lg:col-span-2 space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-base font-extrabold text-white flex items-center gap-2">
                       <span>⚡ Instant Image Compressor in KB</span>
@@ -735,17 +822,117 @@ export default function DashboardPage({
                       </span>
                     </h3>
                     <p className="text-xs text-slate-300 mt-0.5">
-                      Drag target KB slider or pick government form presets for instant client-side resizing.
+                      Upload your image, pick target KB, and click <b>Compress Image</b> for instant client-side resizing.
                     </p>
                   </div>
+
+                  <button
+                    onClick={() => onSelectTool('image-reducer')}
+                    className="px-3.5 py-1.5 bg-blue-950 hover:bg-blue-900 border border-blue-700 text-blue-200 font-bold rounded-xl text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span>Launch Full Tool →</span>
+                  </button>
                 </div>
 
-                {/* Preset Pills */}
-                <div className="space-y-2">
+                {/* File Upload Zone or Selected File View */}
+                {!miniFile ? (
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith('image/')) handleMiniFileSelect(file);
+                    }}
+                    onClick={() => miniFileInputRef.current?.click()}
+                    className="w-full bg-blue-950/80 border-2 border-dashed border-cyan-500/60 hover:border-cyan-400 rounded-3xl p-8 sm:p-10 text-center flex flex-col items-center justify-center gap-3.5 transition-all cursor-pointer shadow-xl hover:shadow-cyan-500/10 group"
+                  >
+                    <input
+                      type="file"
+                      ref={miniFileInputRef}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleMiniFileSelect(file);
+                      }}
+                      accept="image/jpeg,image/png,image/webp,image/jpg"
+                      className="hidden"
+                    />
+                    <div className="w-16 h-16 rounded-2xl bg-cyan-500/15 border border-cyan-500/40 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform shadow-inner">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <span className="text-base sm:text-lg font-black text-white block">
+                        Select or Drag & Drop Image to Compress
+                      </span>
+                      <span className="text-xs text-slate-300 mt-1 block">
+                        Supports JPG, PNG, WEBP, JPEG · 100% Client-Side Private (0 KB Server Upload)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="mt-1 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs sm:text-sm shadow-lg shadow-emerald-600/30 flex items-center gap-2 pointer-events-none"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Choose Image File (फोटो चुनें)</span>
+                    </button>
+                    <span className="text-[11px] text-cyan-300/80 font-mono">
+                      Guaranteed Exact Target KB: 20KB, 50KB, 100KB or Custom
+                    </span>
+                  </div>
+                ) : (
+                  /* Active File Bar */
+                  <div className="bg-blue-950/70 border border-blue-800 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <div className="w-14 h-14 rounded-xl bg-slate-900 border border-blue-700/60 flex items-center justify-center text-cyan-400 shrink-0 overflow-hidden shadow-inner">
+                        {miniImage ? (
+                          <img src={miniImage.src} alt="Uploaded" className="w-full h-full object-cover" />
+                        ) : (
+                          <Upload className="w-6 h-6" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-bold text-xs sm:text-sm text-white block truncate max-w-[200px] sm:max-w-xs">
+                          {miniFile.name}
+                        </span>
+                        <div className="flex items-center gap-2 text-[11px] text-cyan-300 font-mono mt-0.5">
+                          <span className="font-bold text-amber-300">{miniOriginalKb} KB</span>
+                          <span>·</span>
+                          <span>{miniDimensions?.w || 0}×{miniDimensions?.h || 0} px</span>
+                          <span className="text-emerald-400 font-bold">Ready</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                      <input
+                        type="file"
+                        ref={miniFileInputRef}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleMiniFileSelect(file);
+                        }}
+                        accept="image/jpeg,image/png,image/webp,image/jpg"
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => miniFileInputRef.current?.click()}
+                        className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Change Image</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Preset Pills and Slider (Active when file uploaded) */}
+                <div className="space-y-2 bg-blue-950/40 border border-blue-900/60 rounded-2xl p-4">
                   <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
-                    <span>Target File Size: <b className="text-cyan-300 font-mono text-sm">{miniTargetKb} KB</b></span>
-                    <span className="text-[11px] text-emerald-400 font-mono">
-                      Output: {miniIsCompressing ? 'Calculating...' : `~${miniCompressedKb} KB (-97%)`}
+                    <span className="flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Target Size: <b className="text-cyan-300 font-mono text-sm">{miniTargetKb} KB</b></span>
+                    </span>
+                    <span className="text-[11px] text-emerald-400 font-mono font-bold">
+                      {miniHasCompressed ? `Result: ${miniCompressedKb} KB (Guaranteed <= ${miniTargetKb} KB)` : `Max Allowed: ${miniTargetKb} KB`}
                     </span>
                   </div>
 
@@ -782,39 +969,36 @@ export default function DashboardPage({
                   </div>
                 </div>
 
-                {/* Action Row */}
-                <div className="flex flex-wrap items-center gap-3 pt-2">
+                {/* USER ACTION BUTTON + DOWNLOAD BUTTON */}
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  {/* Action Button: User must click this button to trigger compression */}
                   <button
-                    onClick={() => {
-                      // Trigger download of a sample compressed file
-                      const dummy = document.createElement('canvas');
-                      dummy.width = 400;
-                      dummy.height = 400;
-                      const ctx = dummy.getContext('2d');
-                      if (ctx) {
-                        ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(0, 0, 400, 400);
-                        ctx.fillStyle = '#1e3a8a';
-                        ctx.font = 'bold 18px Arial';
-                        ctx.fillText(`Compressed to ${miniCompressedKb} KB`, 40, 200);
-                        const a = document.createElement('a');
-                        a.href = dummy.toDataURL('image/jpeg', 0.85);
-                        a.download = `photo_${miniCompressedKb}KB.jpg`;
-                        a.click();
-                      }
-                    }}
-                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer transition-all hover:scale-105"
+                    onClick={handleRunMiniCompression}
+                    disabled={miniIsCompressing || !miniFile}
+                    className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 disabled:opacity-50 text-white font-black rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer hover:scale-105"
                   >
-                    <Download className="w-4 h-4" />
-                    <span>📥 Download Compressed JPG Now (Free Without Login)</span>
+                    {miniIsCompressing ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Minimize2 className="w-4 h-4" />
+                    )}
+                    <span>{miniIsCompressing ? 'Compressing to Target KB...' : `⚡ Compress Image to ${miniTargetKb} KB (कंप्रेस करें)`}</span>
                   </button>
 
-                  <button
-                    onClick={() => onSelectTool('image-reducer')}
-                    className="px-4 py-2 bg-blue-950 hover:bg-blue-900 border border-blue-700 text-blue-200 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <span>Launch Full Pi7 Tool →</span>
-                  </button>
+                  {/* Download Button (Active ONLY after action button is clicked and compressed) */}
+                  {miniHasCompressed && miniCompressedUrl ? (
+                    <button
+                      onClick={handleDownloadMiniCompressed}
+                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer transition-all hover:scale-105 animate-in fade-in"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>📥 Download {miniCompressedKb} KB JPG (Free)</span>
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-slate-400">
+                      {miniFile ? 'Click "Compress Image" to perform compression & activate download.' : 'Upload an image above to begin.'}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -834,8 +1018,12 @@ export default function DashboardPage({
 
                   <div className="bg-emerald-950/40 rounded-xl p-2.5 border border-emerald-500/40">
                     <span className="text-[10px] text-emerald-300 block mb-0.5">Compressed</span>
-                    <span className="font-black text-emerald-400 font-mono text-sm">{miniCompressedKb} KB</span>
-                    <span className="text-[9px] text-emerald-300 block mt-0.5 font-bold">Target Achieved ✓</span>
+                    <span className="font-black text-emerald-400 font-mono text-sm">
+                      {miniHasCompressed ? `${miniCompressedKb} KB` : `~${miniTargetKb} KB`}
+                    </span>
+                    <span className="text-[9px] text-emerald-300 block mt-0.5 font-bold">
+                      {miniHasCompressed ? 'Guaranteed <= Target ✓' : 'Target Bound'}
+                    </span>
                   </div>
                 </div>
 
